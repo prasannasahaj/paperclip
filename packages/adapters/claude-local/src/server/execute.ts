@@ -98,7 +98,7 @@ import { prepareCompatibleClaudeCommand } from "./sandbox-cli-version.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
-import { buildClaudePluginArgs, resolveClaudePluginDirs, shouldUseStrictMcpConfig } from "./plugin-dirs.js";
+import { buildClaudePluginArgs, parseEnabledPluginNames, resolveClaudePluginDirs, shouldUseStrictMcpConfig } from "./plugin-dirs.js";
 import { buildClaudeExecutionPermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
 import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import {
@@ -574,6 +574,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         env: process.env,
         companyId: agent.companyId,
         configuredPluginDirs: asStringArray(config.pluginDirs),
+        enabledPluginNames: parseEnabledPluginNames(config.plugins),
       });
   const runtimeMcpIdentity = JSON.stringify(
     runtimeMcpServers.map(({ name, url, connectionId }) => ({ name, url, connectionId })),
