@@ -7,6 +7,7 @@ import {
   listStoredClaudePluginDirs,
   resolveClaudePluginDirs,
   resolveClaudePluginStoreDir,
+  parseEnabledPluginNames,
   shouldUseStrictMcpConfig,
 } from "./plugin-dirs.js";
 
@@ -58,9 +59,47 @@ describe("claude plugin dirs", () => {
       env,
       companyId: "company-1",
       configuredPluginDirs: [stored, "  ", path.join(tmp, "extra")],
+      enabledPluginNames: null,
     });
 
     expect(resolved).toEqual([stored, path.join(tmp, "extra")]);
+  });
+
+  it("limits stored plugins to the enabled names while keeping explicitly configured dirs", async () => {
+    const env = { PAPERCLIP_HOME: tmp, PAPERCLIP_INSTANCE_ID: "dev" };
+    const storeDir = resolveClaudePluginStoreDir(env, "company-1");
+    await writePlugin(storeDir, "atlassian");
+    await writePlugin(storeDir, "superpowers");
+
+    const resolved = await resolveClaudePluginDirs({
+      env,
+      companyId: "company-1",
+      configuredPluginDirs: [path.join(tmp, "extra")],
+      enabledPluginNames: ["superpowers", "missing"],
+    });
+
+    expect(resolved).toEqual([path.join(storeDir, "superpowers"), path.join(tmp, "extra")]);
+  });
+
+  it("loads no stored plugins for an empty allow-list", async () => {
+    const env = { PAPERCLIP_HOME: tmp, PAPERCLIP_INSTANCE_ID: "dev" };
+    await writePlugin(resolveClaudePluginStoreDir(env, "company-1"), "atlassian");
+
+    const resolved = await resolveClaudePluginDirs({
+      env,
+      companyId: "company-1",
+      configuredPluginDirs: [],
+      enabledPluginNames: [],
+    });
+
+    expect(resolved).toEqual([]);
+  });
+
+  it("treats an absent allow-list as all plugins and drops non-string entries", () => {
+    expect(parseEnabledPluginNames(undefined)).toBeNull();
+    expect(parseEnabledPluginNames("atlassian")).toBeNull();
+    expect(parseEnabledPluginNames([" atlassian ", 3, "", "superpowers"])).toEqual(["atlassian", "superpowers"]);
+    expect(parseEnabledPluginNames([])).toEqual([]);
   });
 
   it("emits one --plugin-dir pair per directory", () => {
