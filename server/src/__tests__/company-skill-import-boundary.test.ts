@@ -143,4 +143,57 @@ describeEmbeddedPostgres("company skill local import boundary", () => {
       }
     }
   });
+
+  it("allows imports under server-configured skill import roots and rejects siblings and symlink escapes", async () => {
+    const companyId = randomUUID();
+    const importRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-import-root-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-outside-skill-"));
+    cleanupDirs.add(importRoot);
+    cleanupDirs.add(outside);
+    const linkedSkill = path.join(importRoot, "plugins", "atlas-core", "skills", "review");
+    await fs.mkdir(linkedSkill, { recursive: true });
+    await fs.writeFile(path.join(linkedSkill, "SKILL.md"), "---\nname: review\ndescription: review\n---\n# Review\n", "utf8");
+    await fs.writeFile(path.join(outside, "SKILL.md"), "---\nname: escaped\ndescription: escaped\n---\n# Escaped\n", "utf8");
+    const symlink = path.join(importRoot, "escaped-link");
+    await fs.symlink(outside, symlink);
+    const prefixAdjacent = `${importRoot}-evil`;
+    await fs.mkdir(prefixAdjacent, { recursive: true });
+    cleanupDirs.add(prefixAdjacent);
+    await fs.writeFile(path.join(prefixAdjacent, "SKILL.md"), "---\nname: evil\ndescription: evil\n---\n# Evil\n", "utf8");
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Import Root Co",
+      issuePrefix: `R${companyId.replaceAll("-", "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const service = companySkillService(db);
+    await expect(service.importFromSource(companyId, linkedSkill)).rejects.toMatchObject({
+      status: 403,
+      details: { code: "skill_workspace_boundary_denied" },
+    });
+
+    const previousRoots = process.env.PAPERCLIP_SKILL_IMPORT_ROOTS;
+    process.env.PAPERCLIP_SKILL_IMPORT_ROOTS = importRoot;
+    try {
+      await expect(service.importFromSource(companyId, linkedSkill)).resolves.toMatchObject({
+        imported: [expect.objectContaining({ slug: "review", sourceType: "local_path" })],
+      });
+      await expect(service.importFromSource(companyId, prefixAdjacent)).rejects.toMatchObject({
+        status: 403,
+        details: { code: "skill_workspace_boundary_denied" },
+      });
+      await expect(service.importFromSource(companyId, symlink)).rejects.toMatchObject({
+        status: 403,
+        details: { code: "skill_workspace_boundary_denied" },
+      });
+    } finally {
+      if (previousRoots === undefined) {
+        delete process.env.PAPERCLIP_SKILL_IMPORT_ROOTS;
+      } else {
+        process.env.PAPERCLIP_SKILL_IMPORT_ROOTS = previousRoots;
+      }
+    }
+  });
 });
