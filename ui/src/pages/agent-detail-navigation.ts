@@ -29,6 +29,7 @@ export const AGENT_DETAIL_NAVIGATION: ReadonlyArray<{
       { value: "overview", label: "Overview" },
       { value: "instructions", label: "Identity" },
       { value: "runtime", label: "Harness / Runtime" },
+      { value: "skills", label: "Skills" },
       { value: "secrets", label: "Secrets & variables" },
       { value: "permissions", label: "Permissions / Trust" },
       { value: "advanced", label: "Advanced" },
@@ -46,7 +47,6 @@ export const AGENT_DETAIL_NAVIGATION: ReadonlyArray<{
 ] as const;
 
 const HIDDEN_VIEW_LABELS: Partial<Record<AgentLocalDetailView, string>> = {
-  skills: "Skills",
   tools: "Tools",
   channels: "Channels",
   "api-keys": "API Keys",
