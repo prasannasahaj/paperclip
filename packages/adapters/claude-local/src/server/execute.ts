@@ -98,6 +98,7 @@ import { prepareCompatibleClaudeCommand } from "./sandbox-cli-version.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 import { isBedrockModelId } from "./models.js";
 import { prepareClaudePromptBundle } from "./prompt-cache.js";
+import { buildClaudePluginArgs, resolveClaudePluginDirs, shouldUseStrictMcpConfig } from "./plugin-dirs.js";
 import { buildClaudeExecutionPermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
 import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import {
@@ -567,6 +568,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     onLog,
   });
   const runtimeMcpServers = ctx.runtimeMcp?.getServers() ?? [];
+  const claudePluginDirs = executionTargetIsRemote
+    ? []
+    : await resolveClaudePluginDirs({
+        env: process.env,
+        companyId: agent.companyId,
+        configuredPluginDirs: asStringArray(config.pluginDirs),
+      });
   const runtimeMcpIdentity = JSON.stringify(
     runtimeMcpServers.map(({ name, url, connectionId }) => ({ name, url, connectionId })),
   );
@@ -874,8 +882,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
     if (runtimeMcpServers.length > 0) {
-      args.push("--mcp-config", effectiveMcpConfigPath, "--strict-mcp-config");
+      args.push("--mcp-config", effectiveMcpConfigPath);
+      if (shouldUseStrictMcpConfig({ runtimeMcpServerCount: runtimeMcpServers.length, pluginDirCount: claudePluginDirs.length })) {
+        args.push("--strict-mcp-config");
+      }
     }
+    args.push(...buildClaudePluginArgs(claudePluginDirs));
     args.push("--add-dir", effectivePromptBundleAddDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
