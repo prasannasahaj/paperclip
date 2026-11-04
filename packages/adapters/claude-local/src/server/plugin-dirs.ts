@@ -34,12 +34,23 @@ export async function listStoredClaudePluginDirs(storeDir: string): Promise<stri
   return installed;
 }
 
+export function parseEnabledPluginNames(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value
+    .filter((name): name is string => typeof name === "string")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+}
+
 export async function resolveClaudePluginDirs(input: {
   env: NodeJS.ProcessEnv;
   companyId: string;
   configuredPluginDirs: string[];
+  enabledPluginNames: string[] | null;
 }): Promise<string[]> {
-  const stored = await listStoredClaudePluginDirs(resolveClaudePluginStoreDir(input.env, input.companyId));
+  const allStored = await listStoredClaudePluginDirs(resolveClaudePluginStoreDir(input.env, input.companyId));
+  const enabled = input.enabledPluginNames ? new Set(input.enabledPluginNames) : null;
+  const stored = enabled ? allStored.filter((dir) => enabled.has(path.basename(dir))) : allStored;
   const configured = input.configuredPluginDirs
     .map((dir) => nonEmpty(dir))
     .filter((dir): dir is string => dir !== null)
