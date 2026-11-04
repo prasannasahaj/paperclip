@@ -12,6 +12,7 @@ const INSTANCE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 function usage() {
   return [
     "Usage: claude-plugin-sync.mjs --company <companyId> [--only name,name] [--dry-run]",
+    "       claude-plugin-sync.mjs --company <companyId> --list",
     "                              [--claude-config-dir <dir>] [--paperclip-home <dir>] [--instance <id>]",
     "",
     "Copies installed Claude Code plugins into the company's Paperclip plugin store as pinned snapshots.",
@@ -24,6 +25,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--dry-run") options.dryRun = true;
+    else if (flag === "--list") options.list = true;
     else if (flag === "--company") options.company = argv[++index];
     else if (flag === "--only") options.only = new Set((argv[++index] ?? "").split(",").map((name) => name.trim()).filter(Boolean));
     else if (flag === "--claude-config-dir") options.claudeConfigDir = argv[++index];
@@ -129,14 +131,75 @@ async function syncPlugin(plugin, storeDir, dryRun, claimedNames) {
   return { plugin, outcome: existing ? "updated" : "added" };
 }
 
+async function listDirectoryNames(directory) {
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => !entry.name.startsWith(".")).map((entry) => entry.name.replace(/\.md$/, "")).sort();
+}
+
+async function listSkillNames(skillsDir) {
+  const entries = await fs.readdir(skillsDir, { withFileTypes: true }).catch(() => []);
+  const names = [];
+  for (const entry of entries) {
+    const hasSkillFile = await fs.access(path.join(skillsDir, entry.name, "SKILL.md")).then(() => true).catch(() => false);
+    if (hasSkillFile) names.push(entry.name);
+  }
+  return names.sort();
+}
+
+async function readMcpServerNames(pluginDir) {
+  const manifest = await readJson(path.join(pluginDir, PLUGIN_MANIFEST_RELATIVE_PATH)).catch(() => ({}));
+  const inline = manifest.mcpServers && typeof manifest.mcpServers === "object" ? manifest.mcpServers : null;
+  const filePath = typeof manifest.mcpServers === "string" ? path.join(pluginDir, manifest.mcpServers) : path.join(pluginDir, ".mcp.json");
+  const declared = inline ?? (await readJson(filePath).catch(() => ({}))).mcpServers ?? {};
+  return Object.keys(declared).sort();
+}
+
+async function describeStoredPlugin(pluginDir) {
+  const record = await readSnapshotRecord(pluginDir);
+  const hooksFile = await fs.access(path.join(pluginDir, "hooks", "hooks.json")).then(() => true).catch(() => false);
+  return {
+    name: path.basename(pluginDir),
+    version: record?.version ?? null,
+    gitCommitSha: record?.gitCommitSha ?? null,
+    skills: await listSkillNames(path.join(pluginDir, "skills")),
+    commands: await listDirectoryNames(path.join(pluginDir, "commands")),
+    subagents: await listDirectoryNames(path.join(pluginDir, "agents")),
+    hooks: hooksFile,
+    mcpServers: await readMcpServerNames(pluginDir),
+  };
+}
+
+async function listStore(storeDir) {
+  const entries = await fs.readdir(storeDir, { withFileTypes: true }).catch(() => []);
+  const pluginDirs = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map((entry) => path.join(storeDir, entry.name)).sort();
+  if (pluginDirs.length === 0) {
+    console.log(`No plugins in ${storeDir}`);
+    return;
+  }
+  for (const pluginDir of pluginDirs) {
+    const plugin = await describeStoredPlugin(pluginDir);
+    console.log(`${plugin.name}@${plugin.version ?? "unversioned"}${plugin.gitCommitSha ? ` (${plugin.gitCommitSha.slice(0, 8)})` : ""}`);
+    console.log(`  skills:     ${plugin.skills.join(", ") || "-"}`);
+    console.log(`  commands:   ${plugin.commands.join(", ") || "-"}`);
+    console.log(`  subagents:  ${plugin.subagents.join(", ") || "-"}`);
+    console.log(`  hooks:      ${plugin.hooks ? "yes" : "-"}`);
+    console.log(`  mcpServers: ${plugin.mcpServers.join(", ") || "-"}`);
+  }
+  console.log(`store: ${storeDir}`);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help || !options.company) {
     console.log(usage());
     process.exit(options.help ? 0 : 2);
   }
-  const claudeConfigDir = resolveClaudeConfigDir(options);
   const storeDir = resolveStoreDir(options);
+  if (options.list) {
+    await listStore(storeDir);
+    return;
+  }
+  const claudeConfigDir = resolveClaudeConfigDir(options);
   const installed = await readInstalledPlugins(claudeConfigDir);
   const selected = options.only ? installed.filter((plugin) => options.only.has(plugin.name)) : installed;
   if (selected.length === 0) {
