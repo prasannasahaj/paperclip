@@ -12,6 +12,7 @@ import { measureRunPhase } from "./execution-preparation-timing.js";
 import { verifyExistingBundledSkillRelease } from "./bundled-skill-release-validation.js";
 import { retainProjectSkillAccess, skillAccessService } from "./skill-access.js";
 import { assertLocalImportOutsideSkillPackageCache } from "./skill-local-import-boundary.js";
+import { resolveConfiguredSkillImportRoots } from "./skill-import-roots.js";
 import type { AuthorizationActor } from "./authorization.js";
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import { logger } from "../middleware/logger.js";
@@ -3029,6 +3030,7 @@ export function companySkillService(db: Db, options: { actor?: AuthorizationActo
       // Uses managedFolder (not effectiveLocalFolder) to stay server-controlled; user-registered
       // localFolder paths are already covered by workspaces[].cwd above.
       ...projectRows.map((project) => project.codebase.managedFolder),
+      ...resolveConfiguredSkillImportRoots(),
     ].filter((root): root is string => typeof root === "string" && root.trim().length > 0);
     const approvedRoots = (await Promise.all(
       configuredRoots.map((root) => fs.realpath(path.resolve(root)).catch(() => null)),
