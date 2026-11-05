@@ -194,9 +194,9 @@ index 0214a50..73f0c16 100644
              ...(thinking !== undefined && { thinking }),
              ...userProvidedOptions,
 +            // Paperclip Runner owns the complete session context. Its isolated
-+            // user root contains only assigned skills; project/local settings
-+            // would reintroduce host prompts, plugins, skills, and MCP servers.
-+            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { settingSources: ["user"] }),
++            // user root contains only assigned skills; project settings add repo
++            // guidance, while local settings and host plugins stay out.
++            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { settingSources: ["user", "project"] }),
 +            // Subagent progress summaries (~30s) feed the task chat's subagent card.
 +            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { agentProgressSummaries: true }),
              ...(settings && { settings }),
