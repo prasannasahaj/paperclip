@@ -8,6 +8,7 @@ import { notFound, unprocessable, conflict } from "../errors.js";
 import type { BudgetServiceHooks } from "./budgets.js";
 import { logActivity, type LogActivityInput, type ActivityPublication } from "./activity-log.js";
 import { withAccountingReadSnapshot, withOperationAccountingTransaction } from "./accounting-transaction.js";
+import { API_EQUIVALENT_RATES_USD_PER_MTOK } from "./anthropic-pricing.js";
 import { queueBudgetEvaluation } from "./budget-evaluation-work.js";
 import { visibleIssueCondition } from "./issue-visibility.js";
 
@@ -26,6 +27,20 @@ export const ordinaryInputTokens = sql<number>`case
     and ${costEvents.model} not like 'openai/_%'
     then greatest(0, ${costEvents.inputTokens} - ${costEvents.cachedInputTokens})
   else ${costEvents.inputTokens} end`;
+
+function apiEquivalentRate(kind: "input" | "cachedInput" | "output") {
+  const branches = Object.entries(API_EQUIVALENT_RATES_USD_PER_MTOK).map(
+    ([family, rates]) => sql`when lower(${costEvents.model}) like ${`%${family}%`} then ${sql.raw(String(rates[kind]))}`,
+  );
+  return sql`(case ${sql.join(branches, sql` `)} else 0 end)`;
+}
+
+const subscriptionApiEquivalentCents = sql<number>`coalesce(sum(case
+  when ${costEvents.billingType} in (${sql.join(SUBSCRIPTION_BILLING_TYPES.map((value) => sql`${value}`), sql`, `)})
+    then (${ordinaryInputTokens} * ${apiEquivalentRate("input")}
+      + ${costEvents.cachedInputTokens} * ${apiEquivalentRate("cachedInput")}
+      + ${costEvents.outputTokens} * ${apiEquivalentRate("output")}) / 10000.0
+  else 0 end), 0)::double precision`;
 
 function sumAsNumber(column: typeof costEvents.costCents | typeof costEvents.inputTokens | typeof costEvents.cachedInputTokens | typeof costEvents.outputTokens | ReturnType<typeof sql>) {
   return sql<number>`coalesce(sum(${column}), 0)::double precision`;
@@ -443,6 +458,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
             sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${sql.join(SUBSCRIPTION_BILLING_TYPES.map((value) => sql`${value}`), sql`, `)}) then ${ordinaryInputTokens} else 0 end), 0)::double precision`,
           subscriptionOutputTokens:
             sql<number>`coalesce(sum(case when ${costEvents.billingType} in (${sql.join(SUBSCRIPTION_BILLING_TYPES.map((value) => sql`${value}`), sql`, `)}) then ${costEvents.outputTokens} else 0 end), 0)::double precision`,
+          subscriptionApiEquivalentCents,
         })
         .from(costEvents)
         .leftJoin(agents, eq(costEvents.agentId, agents.id))

@@ -129,6 +129,8 @@ export interface CostByAgent {
   subscriptionCachedInputTokens: number;
   subscriptionInputTokens: number;
   subscriptionOutputTokens: number;
+  /** Rough list-price value of subscription usage; not billed spend. */
+  subscriptionApiEquivalentCents?: number;
 }
 
 export interface CostByProviderModel {
