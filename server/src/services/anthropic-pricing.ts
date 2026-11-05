@@ -6,6 +6,14 @@ const RATE_CARDS: Record<string, { rates: readonly string[]; version: string }> 
   "claude-opus-5-5": { rates: ["4", "0.2", "8", "20"], version: "anthropic-standard-2026-10-12" },
 };
 
+/** Rough list-price rates (USD per million tokens) used only to express
+ * subscription usage in API-equivalent dollars. Never a bill. */
+export const API_EQUIVALENT_RATES_USD_PER_MTOK = {
+  sonnet: { input: 2, cachedInput: 0.2, output: 10 },
+  opus: { input: 4, cachedInput: 0.2, output: 20 },
+  haiku: { input: 1, cachedInput: 0.1, output: 5 },
+} as const;
+
 /** A complete token receipt can receive an explicit estimate, never an invoice
  * claim. ACP aggregates cache writes without TTL; conservatively price them at
  * the documented one-hour rate rather than silently assume five-minute writes. */
