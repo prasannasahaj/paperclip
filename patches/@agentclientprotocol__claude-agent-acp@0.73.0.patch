@@ -30,9 +30,9 @@ index 0214a509eb5e7b777a69e4e34637941c275d27b1..403be02df66e25eee29e7d5bef146270
              ...(thinking !== undefined && { thinking }),
              ...userProvidedOptions,
 +            // Paperclip Runner owns the complete session context. Its isolated
-+            // user root contains only assigned skills; project/local settings
-+            // would reintroduce host prompts, plugins, skills, and MCP servers.
-+            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { settingSources: ["user"] }),
++            // user root contains only assigned skills; project settings add repo
++            // guidance, while local settings and host plugins stay out.
++            ...(process.env.PAPERCLIP_ACPX_ISOLATED_CONTEXT === "1" && { settingSources: ["user", "project"] }),
              ...(settings && { settings }),
              env,
              // Override certain fields that must be controlled by ACP
