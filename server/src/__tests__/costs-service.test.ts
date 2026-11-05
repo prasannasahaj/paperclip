@@ -512,6 +512,45 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     expect(byProjectRow).toMatchObject({ projectId, costCents: 137, eventCount: 2, unpricedEventCount: 1 });
   });
 
+  it("reports API-equivalent value for subscription usage without changing billed cost", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Claude Agent",
+      role: "engineer",
+      status: "active",
+      adapterType: "claude_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await costs.createEvent(companyId, {
+      agentId,
+      provider: "anthropic",
+      biller: "anthropic",
+      billingType: "subscription_included",
+      model: "sonnet",
+      inputTokens: 1_000_000,
+      cachedInputTokens: 10_000_000,
+      outputTokens: 100_000,
+      costCents: 0,
+      occurredAt: new Date(),
+    });
+
+    const [usage] = await costs.byAgent(companyId);
+    expect(usage?.costCents).toBe(0);
+    expect(usage?.subscriptionApiEquivalentCents).toBeCloseTo(500, 5);
+  });
+
   it("aggregates cost event sums above int32 without raising Postgres integer overflow", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
