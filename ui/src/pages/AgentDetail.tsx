@@ -41,6 +41,7 @@ import { AgentSkillsTab } from "./agent-skills/AgentSkillsTab";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { agentDisplayAdapterType, getAdapterDisplay } from "../adapters/adapter-display-registry";
 import { adapterLabels, roleLabels, help } from "../components/agent-config-primitives";
+import { ReportsToPicker } from "../components/ReportsToPicker";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useAdapterCapabilities } from "@/adapters/use-adapter-capabilities";
 import { MarkdownEditor } from "../components/MarkdownEditor";
@@ -570,10 +571,11 @@ export function AgentDetail() {
       }
     },
   });
-  const saveHeaderField = async (patch: { name?: string; title?: string | null }) => {
+  const saveHeaderField = async (patch: { name?: string; title?: string | null; reportsTo?: string | null }) => {
     if (!agent) return;
     if (configDirty || configSaving) {
-      setActionError(`Save or discard your unsaved changes before you change the ${patch.name === undefined ? "title" : "name"}.`);
+      const changedField = patch.name !== undefined ? "name" : patch.reportsTo !== undefined ? "manager" : "title";
+      setActionError(`Save or discard your unsaved changes before you change the ${changedField}.`);
       return;
     }
     setActionError(null);
@@ -584,6 +586,21 @@ export function AgentDetail() {
     }
   };
   const directReports = (allAgents ?? []).filter((a) => a.reportsTo === agent?.id && a.status !== "terminated");
+  const reportsToExcludedAgentIds = useMemo(() => {
+    if (!agent) return [];
+    const excluded = new Set([agent.id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const candidate of allAgents ?? []) {
+        if (candidate.reportsTo && excluded.has(candidate.reportsTo) && !excluded.has(candidate.id)) {
+          excluded.add(candidate.id);
+          grew = true;
+        }
+      }
+    }
+    return [...excluded];
+  }, [agent, allAgents]);
   const overviewSkillNames = useMemo(() => {
     const namesByKey = new Map((overviewCompanySkills ?? []).map((skill) => [skill.key, skill.name]));
     return (skillSnapshot?.desiredSkills ?? []).map((key) => namesByKey.get(key) ?? key);
@@ -907,16 +924,14 @@ export function AgentDetail() {
               onSave={(title) => saveHeaderField({ title: title || null })}
             />
             <span aria-hidden>·</span>
-            <span>
-              Reports to{" "}
-              {reportsToAgent ? (
-                <Link className="text-muted-foreground hover:text-foreground" to={agentDetailHref(agentRouteRef(reportsToAgent))}>
-                  {reportsToAgent.name}
-                </Link>
-              ) : (
-                "Board"
-              )}
-            </span>
+            <ReportsToPicker
+              agents={allAgents ?? []}
+              value={agent.reportsTo ?? null}
+              onChange={(reportsTo) => saveHeaderField({ reportsTo })}
+              disabled={headerUpdate.isPending}
+              excludeAgentIds={reportsToExcludedAgentIds}
+              chooseLabel="Reports to Board"
+            />
           </div>
           <AgentLifecycleStatus agent={currentAgent} refreshError={lifecycle.isError} onRetry={() => agentAction.mutate("retryLifecycle")} retryPending={agentAction.isPending} />
         </div>
