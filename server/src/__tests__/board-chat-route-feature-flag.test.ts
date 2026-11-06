@@ -11,13 +11,26 @@ const mockIssueService = vi.hoisted(() => ({
   listComments: vi.fn(),
 }));
 const mockSpawn = vi.hoisted(() => vi.fn());
+const mockPrepareManagedAiRuntime = vi.hoisted(() =>
+  vi.fn(async (..._args: unknown[]): Promise<unknown> => {
+    throw new Error("no default AI connection");
+  }),
+);
 
 vi.mock("../services/index.js", () => ({
   instanceSettingsService: () => ({ getExperimental: mockGetExperimental }),
   issueService: () => mockIssueService,
 }));
 
-vi.mock("node:child_process", () => ({ spawn: mockSpawn }));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: mockSpawn,
+}));
+
+vi.mock("../services/ai-connection-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/ai-connection-runtime.js")>()),
+  prepareManagedAiRuntime: mockPrepareManagedAiRuntime,
+}));
 
 vi.mock("../services/fast-responses.js", () => ({
   enqueueFastResponse: vi.fn(async () => undefined),
@@ -25,7 +38,7 @@ vi.mock("../services/fast-responses.js", () => ({
 }));
 
 vi.mock("../routes/authz.js", () => ({
-  getActorInfo: () => ({ actorId: "user-1", agentId: null, runId: null }),
+  getActorInfo: () => ({ actorType: "user", actorId: "user-1", agentId: null, runId: null }),
   assertCompanyAccess: () => {},
 }));
 
@@ -159,5 +172,170 @@ describe("board-chat history role classification", () => {
     expect(
       isConciergeReply({ authorAgentId: "agent-1", authorUserId: "board-concierge" }),
     ).toBe(false);
+  });
+});
+
+describe("board-chat Claude CLI failures", () => {
+  const authFailureResult = {
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    api_error_status: 401,
+    error: "authentication_failed",
+    result: "Failed to authenticate: OAuth session expired and could not be refreshed",
+  };
+
+  it("tells the operator to log in again when the CLI reports an expired session", async () => {
+    const { describeBoardChatFailure } = await import("../routes/board-chat.js");
+
+    const message = describeBoardChatFailure(authFailureResult);
+    expect(message).toContain("CLAUDE_CONFIG_DIR");
+    expect(message).not.toContain("/login");
+  });
+
+  it("falls back to the CLI failure description for non-auth errors", async () => {
+    const { describeBoardChatFailure } = await import("../routes/board-chat.js");
+
+    expect(
+      describeBoardChatFailure({ type: "result", subtype: "error_max_turns", is_error: true, result: "Hit the turn limit" }),
+    ).toContain("Hit the turn limit");
+  });
+
+  it("explains silent failures: timeouts, login prompts on stderr, and plain crashes", async () => {
+    const { describeSilentBoardChatFailure } = await import("../routes/board-chat.js");
+
+    expect(describeSilentBoardChatFailure({ timedOut: true, exitCode: null, stderr: "" })).toContain("too long");
+    expect(describeSilentBoardChatFailure({ timedOut: false, exitCode: 1, stderr: "Please run /login" })).toContain("CLAUDE_CONFIG_DIR");
+    expect(describeSilentBoardChatFailure({ timedOut: false, exitCode: 1, stderr: "boom" })).toContain("couldn't respond");
+    expect(describeSilentBoardChatFailure({ timedOut: false, exitCode: 0, stderr: "" })).toBeNull();
+  });
+
+  it("points at AI connections settings when the managed connection is what expired", async () => {
+    const { describeBoardChatFailure } = await import("../routes/board-chat.js");
+
+    const message = describeBoardChatFailure(authFailureResult, true);
+    expect(message).toContain("AI connections");
+    expect(message).not.toContain("CLAUDE_CONFIG_DIR");
+  });
+
+  it("recognises failed results and ignores successful ones", async () => {
+    const { isFailedClaudeResult } = await import("../routes/board-chat.js");
+
+    expect(isFailedClaudeResult(authFailureResult)).toBe(true);
+    expect(isFailedClaudeResult({ type: "result", subtype: "success", is_error: false, result: "ok" })).toBe(false);
+    expect(isFailedClaudeResult({ type: "assistant" })).toBe(false);
+  });
+
+  it("streams an error event and persists no concierge reply when the CLI fails to authenticate", async () => {
+    mockGetExperimental.mockResolvedValue({ enableConferenceRoomChat: true });
+    mockIssueService.list.mockResolvedValue([{ id: "issue-1", title: "Board Operations", status: "todo" }]);
+    mockIssueService.addComment.mockResolvedValue({ id: "comment-1", createdAt: new Date() });
+    mockIssueService.listComments.mockResolvedValue([]);
+    const proc = new EventEmitter() as any;
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.stdin = { write: vi.fn(), end: vi.fn() };
+    proc.exitCode = null;
+    proc.killed = false;
+    proc.kill = vi.fn();
+    mockSpawn.mockReturnValue(proc);
+    const app = await createApp();
+
+    const pending = request(app)
+      .post("/api/board/chat/stream")
+      .send({ companyId: "company-1", message: "hello" })
+      .buffer(true)
+      .parse((res, callback) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        res.on("end", () => callback(null, body));
+      });
+    const done = pending.then((res) => res.body as string);
+
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    const assistantError = {
+      type: "assistant",
+      error: "authentication_failed",
+      message: { content: [{ type: "text", text: authFailureResult.result }] },
+    };
+    proc.stdout.emit("data", Buffer.from(`${JSON.stringify(assistantError)}\n${JSON.stringify(authFailureResult)}\n`));
+    proc.emit("close", 1);
+
+    const stream = await done;
+    expect(stream).toContain('"type":"error"');
+    expect(stream).toContain("CLAUDE_CONFIG_DIR");
+    expect(stream).not.toContain('"type":"chunk"');
+    expect(mockIssueService.addComment).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("board-chat Claude connection", () => {
+  function makeProc() {
+    const proc = new EventEmitter() as any;
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.stdin = { write: vi.fn(), end: vi.fn() };
+    proc.exitCode = null;
+    proc.killed = false;
+    proc.kill = vi.fn();
+    return proc;
+  }
+
+  async function startChat(proc: any) {
+    mockGetExperimental.mockResolvedValue({ enableConferenceRoomChat: true });
+    mockIssueService.list.mockResolvedValue([{ id: "issue-1", title: "Board Operations", status: "todo" }]);
+    mockIssueService.addComment.mockResolvedValue({ id: "comment-1", createdAt: new Date() });
+    mockIssueService.listComments.mockResolvedValue([]);
+    mockSpawn.mockReturnValue(proc);
+    const app = await createApp();
+    const finished = request(app)
+      .post("/api/board/chat/stream")
+      .send({ companyId: "company-1", message: "hello" })
+      .then(() => undefined, () => undefined);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    return finished;
+  }
+
+  it("runs claude with the responsible user's default AI connection and releases it afterwards", async () => {
+    const cleanup = vi.fn(async () => undefined);
+    mockPrepareManagedAiRuntime.mockResolvedValue({
+      config: { env: { CLAUDE_CONFIG_DIR: "/managed/home/provider", ANTHROPIC_AUTH_TOKEN: "managed-value" } },
+      cleanup,
+    });
+    const proc = makeProc();
+    const finished = startChat(proc);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    const spawnEnv = mockSpawn.mock.calls[0][2].env;
+    expect(spawnEnv.CLAUDE_CONFIG_DIR).toBe("/managed/home/provider");
+    expect(spawnEnv.ANTHROPIC_AUTH_TOKEN).toBe("managed-value");
+    expect(spawnEnv.PAPERCLIP_COMPANY_ID).toBe("company-1");
+    expect(mockPrepareManagedAiRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        companyId: "company-1",
+        responsibleUserId: "user-1",
+        binding: { provider: "anthropic", method: "subscription", mode: "responsible_user" },
+      }),
+    );
+    expect(cleanup).not.toHaveBeenCalled();
+
+    proc.emit("close", 0);
+    await finished;
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the host environment when no AI connection can be used", async () => {
+    mockPrepareManagedAiRuntime.mockRejectedValue(new Error("no default AI connection"));
+    const proc = makeProc();
+    const finished = startChat(proc);
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+
+    const spawnEnv = mockSpawn.mock.calls[0][2].env;
+    expect(spawnEnv.PAPERCLIP_COMPANY_ID).toBe("company-1");
+    expect(spawnEnv.CLAUDE_CONFIG_DIR).toBe(process.env.CLAUDE_CONFIG_DIR);
+
+    proc.emit("close", 0);
+    await finished;
   });
 });
