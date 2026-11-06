@@ -55,6 +55,7 @@ describe("explicit file output requirements", () => {
     "Write report.txt and return it. This is an internal verification file, not a deliverable.",
     "Write report.txt and send it as an attachment in your response. This is an internal verification file, not a deliverable.",
     "Write report.txt. This is an internal verification file, not a deliverable. Send it as a download link in your response.",
+    "Do not edit, create or delete files, but export the findings as a spreadsheet.",
   ])("recognizes an explicit output request: %s", objective => {
     expect(explicitlyRequestsFileOutput(objective)).toBe(true);
   });
@@ -109,6 +110,9 @@ describe("explicit file output requirements", () => {
     "Give me advice on file permissions.",
     "Post exactly one durable progress comment whose entire body is TRACKED, then finish this child task. Create no files and do not delegate or create any further tasks.",
     "Create no files.",
+    "Do not edit, create or delete files.",
+    "Do not edit, create, or delete files, and do not run any tool other than posting your reply.",
+    "Never edit, delete or create attachments.",
     "Generate no attachments and answer in chat.",
     "Write a reply without any files.",
     "Use native write/read file tools for this task, not bash or the instructions API.",
