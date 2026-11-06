@@ -5,8 +5,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeClaudeFailure, detectClaudeLoginRequired, resolveSharedClaudeConfigDir } from "@paperclipai/adapter-claude-local/server";
 import type { Db } from "@paperclipai/db";
 import type { DeploymentMode } from "@paperclipai/shared";
+import { prepareManagedAiRuntime, stripAiAuthBindings } from "../services/ai-connection-runtime.js";
+import { logger } from "../middleware/logger.js";
 import { instanceSettingsService, issueService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
@@ -59,6 +62,77 @@ export function isConciergeReply(comment: {
   authorUserId?: string | null;
 }): boolean {
   return !comment.authorAgentId && comment.authorUserId === "board-concierge";
+}
+
+function claudeLoginRequiredMessage(usedAiConnection: boolean): string {
+  if (usedAiConnection) {
+    return "Your Claude subscription connection has expired. Reconnect it in AI connections settings, then retry.";
+  }
+  return (
+    `The Claude login the Paperclip server is using has expired (config directory: ${resolveSharedClaudeConfigDir()}). ` +
+    "Restart the server with CLAUDE_CONFIG_DIR pointing at the directory that holds your current Claude login, " +
+    "or sign in again from a terminal on the server machine."
+  );
+}
+
+export function isFailedClaudeResult(event: Record<string, unknown>): boolean {
+  if (event.type !== "result") return false;
+  const subtype = typeof event.subtype === "string" ? event.subtype : "";
+  return event.is_error === true || subtype.startsWith("error");
+}
+
+const GENERIC_FAILURE_MESSAGE = "The board assistant couldn't respond. Please try again.";
+const STDERR_TAIL_CHARS = 2000;
+
+export function describeBoardChatFailure(failedResult: Record<string, unknown>, usedAiConnection = false): string {
+  const { requiresLogin } = detectClaudeLoginRequired({ parsed: failedResult, stdout: "", stderr: "" });
+  if (requiresLogin) return claudeLoginRequiredMessage(usedAiConnection);
+  return describeClaudeFailure(failedResult) ?? GENERIC_FAILURE_MESSAGE;
+}
+
+export function describeSilentBoardChatFailure(input: {
+  timedOut: boolean;
+  exitCode: number | null;
+  stderr: string;
+  usedAiConnection?: boolean;
+}): string | null {
+  if (input.timedOut) return "The board assistant took too long to respond and was stopped. Please try again.";
+  if (!input.exitCode) return null;
+  const { requiresLogin } = detectClaudeLoginRequired({ parsed: null, stdout: "", stderr: input.stderr });
+  return requiresLogin ? claudeLoginRequiredMessage(input.usedAiConnection ?? false) : GENERIC_FAILURE_MESSAGE;
+}
+
+type BoardChatClaudeRuntime = Awaited<ReturnType<typeof prepareManagedAiRuntime>>;
+
+async function prepareBoardChatClaudeRuntime(
+  db: Db,
+  companyId: string,
+  responsibleUserId: string | null,
+): Promise<BoardChatClaudeRuntime | null> {
+  try {
+    return await prepareManagedAiRuntime(db, {
+      companyId,
+      agentId: "",
+      responsibleUserId,
+      adapterType: "claude_local",
+      binding: { provider: "anthropic", method: "subscription", mode: "responsible_user" },
+      allowUninstalledPersonal: true,
+      config: {},
+    });
+  } catch (error) {
+    logger.warn({ err: error, companyId }, "Board chat could not use the default AI connection; falling back to the host Claude login");
+    return null;
+  }
+}
+
+function boardChatChildEnv(
+  runtime: BoardChatClaudeRuntime | null,
+  controlPlane: { apiUrl: string; companyId: string },
+): NodeJS.ProcessEnv {
+  const base = runtime
+    ? { ...stripAiAuthBindings(process.env), ...(runtime.config.env as Record<string, string>) }
+    : process.env;
+  return { ...base, PAPERCLIP_API_URL: controlPlane.apiUrl, PAPERCLIP_COMPANY_ID: controlPlane.companyId } as NodeJS.ProcessEnv;
 }
 
 /** Max simultaneous `claude` subprocesses across all board-chat requests. */
@@ -244,26 +318,35 @@ export function boardChatRoutes(
       "--dangerously-skip-permissions",
     ];
 
+    const claudeRuntime = await prepareBoardChatClaudeRuntime(
+      db,
+      companyId,
+      actor.actorType === "user" ? actor.actorId : null,
+    );
+    const releaseClaudeRuntime = () => {
+      void claudeRuntime?.cleanup().catch((error) =>
+        logger.warn({ err: error, companyId }, "Board chat AI runtime cleanup failed"));
+    };
+
     liveBoardChats += 1;
     let slotReleased = false;
     const releaseSlot = () => {
       if (slotReleased) return;
       slotReleased = true;
       liveBoardChats -= 1;
+      releaseClaudeRuntime();
     };
 
     const proc = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: "/tmp",
-      env: {
-        ...process.env,
-        PAPERCLIP_API_URL: apiUrl,
-        PAPERCLIP_COMPANY_ID: companyId,
-      },
+      env: boardChatChildEnv(claudeRuntime, { apiUrl, companyId }),
     });
 
     let fullResponse = "";
     let streamedViaDelta = false;
+    let failedResult: Record<string, unknown> | null = null;
+    let stderrTail = "";
     let killed = false;
 
     // 120s timeout — board conversations can involve multiple API calls.
@@ -326,6 +409,12 @@ export function boardChatRoutes(
           continue; // Not JSON — skip.
         }
 
+        if (isFailedClaudeResult(event)) {
+          failedResult = event;
+          continue;
+        }
+        if (event.type === "assistant" && event.error) continue;
+
         // Unwrap partial-message stream events.
         const inner = event.type === "stream_event" ? event.event : event;
         if (!inner || typeof inner !== "object") continue;
@@ -353,6 +442,7 @@ export function boardChatRoutes(
     });
 
     proc.stderr.on("data", (data: Buffer) => {
+      stderrTail = (stderrTail + data.toString()).slice(-STDERR_TAIL_CHARS);
       console.error("[board/chat/stream stderr]", data.toString());
     });
 
@@ -371,6 +461,20 @@ export function boardChatRoutes(
         } catch {
           /* best effort */
         }
+      }
+
+      const failureMessage = failedResult
+        ? describeBoardChatFailure(failedResult, claudeRuntime !== null)
+        : cleanedResponse
+          ? null
+          : describeSilentBoardChatFailure({
+              timedOut: killed,
+              exitCode: exitCode ?? null,
+              stderr: stderrTail,
+              usedAiConnection: claudeRuntime !== null,
+            });
+      if (res.writable && failureMessage) {
+        res.write(`data: ${JSON.stringify({ type: "error", message: failureMessage })}\n\n`);
       }
 
       if (res.writable) {
