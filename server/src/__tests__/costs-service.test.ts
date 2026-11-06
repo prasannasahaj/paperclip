@@ -483,9 +483,11 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       cachedInputTokens: 2_632_998, outputTokens: 32_644 });
   });
 
-  it("reports API-equivalent value for subscription usage without changing billed cost", async () => {
+  it("attributes API-equivalent cost of subscription usage to agent, project, model and issue", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
+    const projectId = randomUUID();
+    const issueId = randomUUID();
     await db.insert(companies).values({
       id: companyId,
       name: "Paperclip",
@@ -503,9 +505,13 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await db.insert(projects).values({ id: projectId, companyId, name: "Subscription Project", status: "active" });
+    await db.insert(issues).values({ id: issueId, companyId, projectId, title: "Subscription issue", status: "todo" });
 
     await costs.createEvent(companyId, {
       agentId,
+      projectId,
+      issueId,
       provider: "anthropic",
       biller: "anthropic",
       billingType: "subscription_included",
@@ -517,9 +523,16 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       occurredAt: new Date(),
     });
 
-    const [usage] = await costs.byAgent(companyId);
-    expect(usage?.costCents).toBe(0);
-    expect(usage?.subscriptionApiEquivalentCents).toBeCloseTo(500, 5);
+    const [byAgentRow] = await costs.byAgent(companyId);
+    const [byProjectRow] = await costs.byProject(companyId);
+    const [byAgentModelRow] = await costs.byAgentModel(companyId);
+    const issueSummary = await costs.issueTreeSummary(companyId, issueId);
+
+    expect(byAgentRow?.costCents).toBeCloseTo(500, 5);
+    expect(byProjectRow?.costCents).toBeCloseTo(500, 5);
+    expect(byAgentModelRow?.costCents).toBeCloseTo(500, 5);
+    expect(issueSummary.costCents).toBeCloseTo(500, 5);
+    expect((await costs.summary(companyId)).spendCents).toBe(0);
   });
 
   it("aggregates cost event sums above int32 without raising Postgres integer overflow", async () => {

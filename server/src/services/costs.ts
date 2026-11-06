@@ -42,6 +42,8 @@ const subscriptionApiEquivalentCents = sql<number>`coalesce(sum(case
       + ${costEvents.outputTokens} * ${apiEquivalentRate("output")}) / 10000.0
   else 0 end), 0)::double precision`;
 
+const displayedCostCents = sql<number>`(coalesce(sum(${costEvents.costCents}), 0) + ${subscriptionApiEquivalentCents})::double precision`;
+
 function sumAsNumber(column: typeof costEvents.costCents | typeof costEvents.inputTokens | typeof costEvents.cachedInputTokens | typeof costEvents.outputTokens | ReturnType<typeof sql>) {
   return sql<number>`coalesce(sum(${column}), 0)::double precision`;
 }
@@ -315,7 +317,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         db
           .select({
             issueCount: sql<number>`count(distinct ${issues.id})::int`,
-            costCents: sumAsNumber(costEvents.costCents),
+            costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
             inputTokens: sumAsNumber(ordinaryInputTokens),
             cachedInputTokens: sumAsNumber(costEvents.cachedInputTokens),
@@ -443,7 +445,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           agentStatus: agents.status,
           eventCount: sql<number>`count(*)::int`,
           estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
-          costCents: sumAsNumber(costEvents.costCents),
+          costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
           inputTokens: sumAsNumber(ordinaryInputTokens),
           cachedInputTokens: sumAsNumber(costEvents.cachedInputTokens),
@@ -464,7 +466,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         .leftJoin(agents, eq(costEvents.agentId, agents.id))
         .where(and(...conditions))
         .groupBy(costEvents.agentId, agents.name, agents.appearance, agents.status)
-        .orderBy(desc(sumAsNumber(costEvents.costCents)));
+        .orderBy(desc(displayedCostCents));
       return rows.map(row => {
         const appearance = row.agentId ? resolveAgentAppearance(row.agentAppearance, row.agentId) : null;
         return { ...row, agentAppearance: appearance, avatarUrl: appearance ? agentAvatarUrl(appearance, 512) : undefined };
@@ -619,7 +621,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           model: costEvents.model,
           eventCount: sql<number>`count(*)::int`,
           estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
-          costCents: sumAsNumber(costEvents.costCents),
+          costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
           inputTokens: sumAsNumber(ordinaryInputTokens),
           cachedInputTokens: sumAsNumber(costEvents.cachedInputTokens),
@@ -677,7 +679,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
       if (range?.from) conditions.push(gte(costEvents.occurredAt, range.from));
       if (range?.to) conditions.push(lte(costEvents.occurredAt, range.to));
 
-      const costCentsExpr = sumAsNumber(costEvents.costCents);
+      const costCentsExpr = displayedCostCents;
 
       return db
         .select({
