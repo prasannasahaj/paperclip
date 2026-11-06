@@ -94,12 +94,18 @@ async function hasCurrentPublicationReceipt(db: Db, companyId: string, receipts:
   return false;
 }
 
+const NEGATED_VERB_LIST = /\b(?:do not|don['’]t|never|no need to)\s+[a-z]+(?:,\s+(?:(?:or|and|nor)\s+)?[a-z]+)+\b/giu;
+
+function joinNegatedVerbLists(objective: string): string {
+  return objective.replace(NEGATED_VERB_LIST, list => list.replace(/,\s+(?:(?:or|and|nor)\s+)?/gu, " or "));
+}
+
 /** Recognize explicit output requests, not incidental mentions of source files.
  * The current server-bound objective is authoritative; summaries cannot invent
  * an output requirement or erase a user's request for a file.
  */
 export function explicitlyRequestsFileOutput(objective: string): boolean {
-  const sentences = objective.replaceAll("\\_", "_").split(/(?:[.!?](?:\s|$)|\n)/iu);
+  const sentences = joinNegatedVerbLists(objective.replaceAll("\\_", "_")).split(/(?:[.!?](?:\s|$)|\n)/iu);
   let precedingFileOutput = false;
   return sentences.some((sentence, index) => {
     const file = /\b(?:files?|attachments?|downloads?|pdf|spreadsheets?|workbooks?|slide decks?|powerpoints?|docx|xlsx|csv)\b|\b[^\s/]+\.(?:md|txt|json|pdf|docx?|xlsx?|csv|pptx?|png|jpe?g|svg|zip)\b/giu;
