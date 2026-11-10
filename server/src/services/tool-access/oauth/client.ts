@@ -8,6 +8,16 @@ const MAX_OAUTH_DCR_CLIENT_ID_LENGTH = 4_096;
 
 const MAX_OAUTH_DCR_CLIENT_SECRET_LENGTH = 16_384;
 
+function tokenResponseRecord(record: Record<string, unknown>): Record<string, unknown> {
+  if (typeof record.access_token === "string") return record;
+  const userToken = asRecord(record.authed_user);
+  if (typeof userToken.access_token !== "string") return record;
+  return {
+    ...userToken,
+    scope: typeof userToken.scope === "string" ? userToken.scope.replace(/,/g, " ") : undefined,
+  };
+}
+
 function invalidOAuthDcrResponse(field: string, reason: string): HttpError {
   return new HttpError(
     502,
@@ -407,8 +417,9 @@ export function createOAuthClientProtocol({ fetchRemoteHttpUrl, assertOAuthEndpo
         status: response.status,
       });
     }
+    const tokenRecord = tokenResponseRecord(record);
     const accessToken =
-      typeof record.access_token === "string" ? record.access_token : null;
+      typeof tokenRecord.access_token === "string" ? tokenRecord.access_token : null;
     if (!accessToken)
       throw new HttpError(
         502,
@@ -416,17 +427,17 @@ export function createOAuthClientProtocol({ fetchRemoteHttpUrl, assertOAuthEndpo
         { code: "oauth_access_token_missing" },
       );
     const expiresIn =
-      typeof record.expires_in === "number"
-        ? record.expires_in
-        : Number(record.expires_in);
+      typeof tokenRecord.expires_in === "number"
+        ? tokenRecord.expires_in
+        : Number(tokenRecord.expires_in);
     return {
       accessToken,
       refreshToken:
-        typeof record.refresh_token === "string" ? record.refresh_token : null,
+        typeof tokenRecord.refresh_token === "string" ? tokenRecord.refresh_token : null,
       expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : null,
-      scope: typeof record.scope === "string" ? record.scope : null,
+      scope: typeof tokenRecord.scope === "string" ? tokenRecord.scope : null,
       tokenType:
-        typeof record.token_type === "string" ? record.token_type : "Bearer",
+        typeof tokenRecord.token_type === "string" ? tokenRecord.token_type : "Bearer",
     };
   }
 

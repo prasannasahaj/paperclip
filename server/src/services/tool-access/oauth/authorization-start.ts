@@ -534,7 +534,10 @@ export function createOAuthAuthorizationStart(db: Db, dependencies: Dependencies
     // MCP URLs retain discovery-first behavior because Paperclip has no manifest
     // against which it could safely judge the caller's requested scope.
     if (authorizationScopes.length > 0)
-      authorizationUrl.searchParams.set("scope", authorizationScopes.join(" "));
+      authorizationUrl.searchParams.set(
+        galleryMethod?.defaults?.oauthScopeParameter ?? "scope",
+        authorizationScopes.join(" "),
+      );
     if (galleryMethod && connection.config.sourceTemplateKey === "google-workspace")
       authorizationUrl.searchParams.set("enable_granular_consent", "true");
     const reviewedAuthorizationParams =

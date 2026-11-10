@@ -1635,3 +1635,12 @@ it("limits explicit DCR registration preference to remote MCP OAuth methods with
   nonMcp.methods[0]!.transport = "rest_api";
   expect(appDefinitionSchema.safeParse(nonMcp).success).toBe(false);
 });
+
+describe("Slack MCP OAuth method", () => {
+  it("requests its reviewed scopes as user scopes", () => {
+    const slack = APP_STORE_DEFINITIONS.find((entry) => entry.slug === "slack")!;
+    const mcpOauth = slack.methods.find((method) => method.key === "mcp-oauth")!;
+    expect(mcpOauth.defaults?.oauthScopeParameter).toBe("user_scope");
+    expect(mcpOauth.defaults?.scopesHint?.length).toBeGreaterThan(0);
+  });
+});
