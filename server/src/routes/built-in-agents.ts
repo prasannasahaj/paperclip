@@ -29,6 +29,16 @@ function formatScheduleLabel(trigger: { cronExpression: string; timezone: string
   return `Weekly · ${trigger.timezone}`;
 }
 
+const HARNESS_IDENTIFYING_ADAPTER_CONFIG_FIELDS = ["model", "provider", "acpxAgent"] as const;
+
+function harnessIdentifyingAdapterConfig(adapterConfig: Record<string, unknown> | null | undefined) {
+  const exposed: Record<string, unknown> = {};
+  for (const field of HARNESS_IDENTIFYING_ADAPTER_CONFIG_FIELDS) {
+    if (typeof adapterConfig?.[field] === "string") exposed[field] = adapterConfig[field];
+  }
+  return exposed;
+}
+
 function redactBuiltInAgentListState(state: BuiltInAgentState): BuiltInAgentState {
   const definition = {
     ...state.definition,
@@ -63,7 +73,7 @@ function redactBuiltInAgentListState(state: BuiltInAgentState): BuiltInAgentStat
     definition,
     agent: {
       ...state.agent,
-      adapterConfig: {},
+      adapterConfig: harnessIdentifyingAdapterConfig(state.agent.adapterConfig),
       runtimeConfig: {},
     },
   };
