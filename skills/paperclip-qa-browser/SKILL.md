@@ -1,17 +1,16 @@
 ---
 name: paperclip-qa-browser
 description: >
-  Verify a finished task or bug fix by understanding the change from the story
-  and the code, then exploring it by hand in real Chrome against the local build.
-  Use when you are the tester or reviewer on an issue in `in_review` and must
-  confirm the behaviour in the browser before approving or sending it back.
+  Verify a finished task or bug fix by reading the story and the code, then
+  exploring the change by hand in a Playwright browser. Use when you are the
+  tester on an `in_review` issue and must confirm behaviour before approving.
 ---
 
 # Paperclip QA Browser
 
-You are the tester. The implementer has finished and parked the issue in `in_review` with you as `currentParticipant`. This is exploratory verification, not a regression suite: you read the story and the code, decide what should now be true, then look at it in Chrome and judge it. Do not write test scripts or assertion files. Reading the diff alone is not enough, and neither is a screenshot of the happy path.
+You are the tester. The implementer has finished and parked the issue in `in_review` with you as `currentParticipant`. This is exploratory verification, not a regression suite: you read the story and the code, decide what should now be true, then look at it in the browser and judge it. Do not write test scripts or assertion files. Reading the diff alone is not enough, and neither is a screenshot of the happy path.
 
-If you cannot reach a local display or Chrome, say so in a comment and move the issue to `blocked` rather than approving untested work.
+If you have no browser tools, say so in a comment and move the issue to `blocked` rather than approving untested work.
 
 ## Step 1 — Understand the change from the code
 
@@ -50,42 +49,45 @@ If the main checkout has no `.env.local`, stop and ask the human; do not recreat
 
 To run only the UI against QA backends, `.env.local` must set `VITE_USE_PROXY='true'` (see `docs/local-setup.md` in that repo). Sign-in then uses the QA Auth0 tenant, so a QA account is required.
 
-## Step 3 — Open Chrome and pick your hands
+## Step 3 — Use the Playwright browser
 
-Preferred, when your tools include `mcp__claude-in-chrome__*`: use them. They drive the human's own Chrome with their existing logins.
+Your tools include the `browser_*` tools of the `Playwright browser` MCP server (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot` and others). Paperclip starts that browser with your run: a fresh, isolated, headless Chrome that has the saved QA login restored. Nothing is left running after the run ends, and no other agent shares it.
 
-Otherwise open the QA window:
+Work one action at a time and read each result before choosing the next:
 
-```bash
-node skills/paperclip-qa-browser/scripts/open-session.mjs <url>
-```
+- `browser_snapshot` is how you read the page. It returns the page as text and costs far fewer tokens than a screenshot. Prefer it for every check.
+- `browser_take_screenshot` saves an image file as evidence. Images are not shown to you unless the agent has `browser.images` enabled, so judge from the snapshot and keep the file as proof.
+- Watch `browser_console_messages` and `browser_network_requests` after each action that touches the change.
 
-It opens a visible Chrome on a dedicated profile at `~/.paperclip/qa-chrome-profile` and prints `{"cdpUrl": "http://127.0.0.1:9333", ...}`. Rerunning reuses the open window. The human signs in once; the login persists across runs. (Chrome 136+ refuses remote debugging on the everyday profile, so that profile cannot be attached to.)
+If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port, and do not write Playwright scripts.
 
-The launcher starts Chrome with `--use-mock-keychain --password-store=basic`, so it never touches the macOS Keychain. Without that, a Chrome started from a background or sandboxed process fails with "A keychain cannot be found to store Chrome". The cost is that this profile's cookies are not Keychain-protected, so keep only QA logins in it.
+## Step 4 — Starting state, and when you need the human
 
-Then use an interactive browser tool attached to that window, one action at a time, looking at the result of each before choosing the next:
+The human may have set things up before handing over. The issue or the hand-off comment can say "start at URL X, this is already done". Take that as your starting point: open the URL, confirm the state is really there, and continue from it. Setup is saved state, not a live tab, so anything the human left unsaved is not visible to you; say so and ask for it to be saved.
 
-- Chrome DevTools MCP attached to the window: `npx -y chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9333`. It gives you page snapshots, click, fill, console messages, network requests and screenshots as tools. If your adapter lets you add MCP servers and this one is not already configured, ask the human to add it.
-- If you have no interactive browser tool at all, fall back to short one-off commands over the same CDP endpoint (Playwright's `chromium.connectOverCDP`, run from the repo root). This is the fallback, not the method: use it to look and click, not to encode a test.
+Get the data you need in this order:
 
-## Step 4 — When you need the human
+1. **Reuse an existing campaign** that fits. Ask for one, or find it from the read-only database tools if you have them.
+2. **Create it through the application's API** when the data is cheap to create and the API is available to you.
+3. **Ask the human** to create it or perform the action, as below.
+
+Never write to the database directly and never touch production: the QA database is read-only to you, and the backends are UK non-prod.
 
 Ask instead of guessing when:
 
-- the page shows a login wall and the QA profile is not signed in
-- the flow needs seeded data you cannot create yourself, for example campaigns, strategies and tactics in Atlas
+- the page shows a login wall: the saved login is missing or expired
+- the flow needs data you cannot create or reuse, for example campaigns, strategies and tactics in Atlas
 - the correct URL is not in the issue and not the default
 
 Create one `ask_user_questions` interaction with `answerMode: "text"`, `resolverPolicy: "human_only"` and `continuationPolicy: "wake_assignee"`. State exactly what to do and what to send back:
 
-> Chrome is open at the QA profile. Sign in there if asked, create a campaign with at least one strategy and two tactics, then reply with the URL of the campaign page.
+> Sign in once so I can reuse the login: run `node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000` from the repo root, sign in in the window it opens, press Enter in the terminal, then reply "signed in".
+
+> Create a campaign with at least one strategy and two tactics, then reply with the URL of the campaign page.
 
 Then follow the waiting posture in the `paperclip` skill: confirm the interaction is saved and pending, set the issue to `in_review`, and exit. You are woken with the answer; resume at Step 5 with the URL they gave.
 
-Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies or tokens out of the profile. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0 and reuses the saved session, and its saved session is for the QA origin, not `localhost`. The equivalent here is the QA profile: once the human has signed in at `localhost:3000` in that window, later runs are already signed in.
-
-After the first sign-in the window can run without a display: `QA_CHROME_HEADLESS=1 node skills/paperclip-qa-browser/scripts/open-session.mjs <url>`. Use headless only once the profile is signed in; a login wall in headless needs a headed window for the human.
+Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later run starts signed in.
 
 ## Step 5 — Explore and judge
 
@@ -96,7 +98,7 @@ Work from what Step 1 told you to expect:
 - Watch the console and network panel during every action. An uncaught error or a 5xx on a path the change touches is a failure even when the page looks right.
 - When something looks wrong, go back to the code to see whether it is a bug, an intended trade-off, or your misreading, before you report it.
 
-Keep to the change and its immediate neighbours. Save a screenshot under `qa/` for each thing you rely on in the verdict: the state that proves a pass, and every failure.
+Keep to the change and its immediate neighbours. Save a screenshot with `browser_take_screenshot` for each thing you rely on in the verdict: the state that proves a pass, and every failure.
 
 ## Step 6 — Record the verdict
 
