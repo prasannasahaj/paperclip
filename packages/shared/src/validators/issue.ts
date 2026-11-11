@@ -649,6 +649,13 @@ export const taskRetrySchema = z.object({
   retryAction: z.literal("move_forward").optional(),
 }).strict();
 
+export const respawnChildSchema = z.object({
+  reason: z.string().trim().min(1).max(2000),
+  approachNote: z.string().trim().min(1).max(8000).optional(),
+}).strict();
+export type RespawnChild = z.infer<typeof respawnChildSchema>;
+export type ChildRespawnReceipt = { outcome: "respawned"; successorIssueId: string; generation: number; created: boolean };
+
 export const childHandoffSchema = z.object({
   predecessor: z.object({
     id: z.string().guid(),

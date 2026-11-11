@@ -78,8 +78,8 @@ Root cause of TAC-98 on this machine. `controller-process-identity.ts` hashes `o
   - Recovery action: `issueRecoveryActionService(db).getActiveForIssue(companyId, issueId)` (`issue_recovery_actions`, `cause`, `evidence.reason`, `nextAction`).
   - Comments: `issue_comments` (`issueComments`: `authorType`, `authorAgentId`, `authorUserId`, `body`, `deletedAt`).
   - Read scope: run-scoped *writes* are subtree-scoped, but `issue:read` is default-open inside a company (`assertIssueReadAllowed` in `server/src/routes/issues.ts`), so no existing check proves ancestry for a read. Ancestry is proved with `loadTaskLineageIssueIds` (`server/src/services/task-workspace-lineage.ts`, parent chain plus privacy parent). The handoff and respawn authority is: the predecessor's `createdByAgentId`, or the assignee of any lineage ancestor; board actors need `issue:read` (handoff) or `issue:mutate` (respawn).
-- [ ] **Step 1: Failing test** `child-handoff.test.ts`: `returns branch, last failed run and blocking action for a cancelled child`; `caps comments at 20 and bodies at 4000`; `never includes another company's rows`.
-- [ ] **Step 2:** Run it, expect FAIL. **Step 3:** implement. **Step 4:** route test: an ancestor agent gets 200, an unrelated agent gets 403, board gets 200. **Step 5:** commit `feat(issues): expose predecessor handoff to parent agents`.
+- [x] **Step 1: Failing test** `child-handoff.test.ts`: `returns branch, last failed run and blocking action for a cancelled child`; `caps comments at 20 and bodies at 4000`; `never includes another company's rows`.
+- [x] **Step 2:** Run it, expect FAIL. **Step 3:** implement. **Step 4:** route test: an ancestor agent gets 200, an unrelated agent gets 403, board gets 200. **Step 5:** commit `feat(issues): expose predecessor handoff to parent agents`.
 
 ### Task 3: Bounded respawn
 
@@ -101,9 +101,9 @@ Root cause of TAC-98 on this machine. `controller-process-identity.ts` hashes `o
   - Ancestry: `loadTaskLineageIssueIds` (Task 2). Cancel uses `issueService(tx).update(id, { status: "cancelled", companyGuard, expectedExecutionLock })`, which runs the service-level cancel side effects; the route then stops a live predecessor run with `heartbeat.cancelRun`, as the PATCH cancel path does. An active recovery action on the cancelled predecessor is left to the existing `source_terminal` sweep.
   - Gates: `budgetService(db).getInvocationBlock` (company pause, project pause, budget hard stop), `issueTreeControlService(db).getActivePauseHoldGate` (tree pause), `evaluateAgentInvokabilityFromDb` (assignee invokability), `assertAssignableAgent` inside create.
   - Cap: "3 successors per lineage" means the fourth respawn attempt is refused, so the plan's test "third respawn returns child_respawn_exhausted" is written as the fourth attempt.
-- [ ] **Step 1: Failing tests:** `creates exactly one successor when called twice concurrently`; `cancels the predecessor and links the successor`; `third respawn returns child_respawn_exhausted and opens a board recovery action with evidence`; `refuses when the company is paused or budget-stopped`; `refuses an unrelated agent`; `writes one activity log entry per mutation`.
-- [ ] **Step 2-4:** run to fail, implement in one transaction (issue lock order as in `native-failed-run-owner-release.ts:168`), run to pass.
-- [ ] **Step 5:** commit `feat(issues): bounded child respawn with handoff and isolated workspace`.
+- [x] **Step 1: Failing tests:** `creates exactly one successor when called twice concurrently`; `cancels the predecessor and links the successor`; `third respawn returns child_respawn_exhausted and opens a board recovery action with evidence`; `refuses when the company is paused or budget-stopped`; `refuses an unrelated agent`; `writes one activity log entry per mutation`.
+- [x] **Step 2-4:** run to fail, implement in one transaction (issue lock order as in `native-failed-run-owner-release.ts:168`), run to pass.
+- [x] **Step 5:** commit `feat(issues): bounded child respawn with handoff and isolated workspace`.
 
 ### Task 4: Wake the parent and teach it
 

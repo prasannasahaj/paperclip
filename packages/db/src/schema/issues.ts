@@ -221,5 +221,8 @@ export const issues = pgTable(
     onboardingFirstTaskIdx: uniqueIndex("issues_onboarding_first_task_uq")
       .on(table.companyId)
       .where(sql`${table.originKind} = 'onboarding_first_task'`),
+    respawnPredecessorIdx: uniqueIndex("issues_respawn_predecessor_uq")
+      .on(table.companyId, table.originKind, table.originId)
+      .where(sql`${table.originKind} = 'respawn' and ${table.originId} is not null`),
   }),
 );

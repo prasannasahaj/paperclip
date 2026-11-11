@@ -2,6 +2,7 @@ import { assertAgentInteraction } from "../services/agent-interaction-policy.js"
 import { assertQueuedCommentInteractionDelivery, recheckQueuedCommentInteractionDelivery } from "../services/agent-interaction-delivery.js";
 import { listStalledDependencies } from "../services/recovery/blocker-stall-wakeups.js";
 import { agentHasChildRecoveryAuthority, buildChildHandoff } from "../services/child-handoff.js";
+import { CHILD_RESPAWN_LINEAGE_CAP, respawnChild } from "../services/child-respawn.js";
 import { confirmMcpAttachmentCleanup, recordMcpAttachmentCleanup, type McpAttachmentCleanup } from "../services/public-mcp/upload-cleanup.js";
 import { notifyDeferredExecutionWork } from "../services/deferred-execution-notifications.js";
 import { notifyNativeRecoveryNotices } from "../services/native-recovery-notice-notifications.js";
@@ -137,6 +138,7 @@ import {
   retryWorkspaceExportSchema,
   recoverWorkspaceSchema,
   taskRetrySchema,
+  respawnChildSchema,
   resumeWorkspaceFinalizationSchema,
   confirmNativeControllerStoppedSchema,
   confirmRunStoppedSchema,
@@ -10430,6 +10432,62 @@ export function issueRoutes(
     if (!issue || !(await assertIssueReadAllowed(req, res, issue))) return;
     await assertChildRecoveryAuthority(req, issue, "issue:read");
     res.json(await buildChildHandoff(db, { companyId: issue.companyId, issueId: issue.id }));
+  });
+
+  async function cancelRunOfRespawnedPredecessor(
+    run: { id: string },
+    predecessorId: string,
+    actor: ReturnType<typeof getActorInfo>,
+  ) {
+    const activityActor = { actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId,
+      runId: actor.runId, agentApiKeyId: actor.agentApiKeyId };
+    try {
+      const cancelled = await heartbeat.cancelRun(run.id);
+      if (!cancelled) return;
+      await logActivity(db, { companyId: cancelled.companyId, ...activityActor, action: "heartbeat.cancelled",
+        entityType: "heartbeat_run", entityId: cancelled.id, issueId: predecessorId,
+        details: { agentId: cancelled.agentId, source: "child_respawn", issueId: predecessorId } });
+    } catch (err) {
+      logger.warn({ err, issueId: predecessorId, runId: run.id }, "failed to cancel run for respawned issue");
+    }
+  }
+
+  router.post("/issues/:id/respawn", validate(respawnChildSchema), async (req, res) => {
+    const issue = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Issue not found");
+    if (!issue || !(await assertIssueReadAllowed(req, res, issue))) return;
+    await assertChildRecoveryAuthority(req, issue, "issue:mutate");
+    const actor = getActorInfo(req);
+    const activeRun = await resolveActiveIssueRun(issue);
+    const result = await respawnChild(db, {
+      companyId: issue.companyId,
+      predecessorIssueId: issue.id,
+      actor: req.actor.type === "agent"
+        ? { type: "agent", id: actor.actorId, runId: actor.runId }
+        : { type: "board", id: actor.actorId },
+      reason: req.body.reason,
+      approachNote: req.body.approachNote,
+    });
+    if (result.outcome === "exhausted") {
+      throw conflict(`This task already has ${CHILD_RESPAWN_LINEAGE_CAP} respawns; the board must decide what happens next.`, {
+        code: result.code, issueId: issue.id,
+      });
+    }
+    if (result.created) {
+      if (activeRun) await cancelRunOfRespawnedPredecessor(activeRun, issue.id, actor);
+      const successor = await svc.getById(result.successorIssueId);
+      if (successor && !isClosedIssueStatus(successor.status)) {
+        void queueIssueAssignmentWakeup({
+          heartbeat,
+          issue: successor,
+          reason: "issue_assigned",
+          mutation: "create",
+          contextSource: "issue.respawn",
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+        });
+      }
+    }
+    res.status(result.created ? 201 : 200).json(result);
   });
 
   router.post("/issues/:id/retry", validate(taskRetrySchema), async (req, res) => {
