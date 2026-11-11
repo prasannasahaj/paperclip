@@ -6,13 +6,13 @@ import { persistActivity, publishActivity, type ActivityPublication } from "./ac
 import { evaluateAgentInvokabilityFromDb } from "./agent-invokability.js";
 import { budgetService } from "./budgets.js";
 import { agentHasChildRecoveryAuthority, buildChildHandoff } from "./child-handoff.js";
+import { CHILD_RESPAWN_LINEAGE_CAP, loadRespawnLineage, respawnOriginId } from "./child-respawn-lineage.js";
 import { issueRecoveryActionService } from "./issue-recovery-actions.js";
 import { issueTreeControlService } from "./issue-tree-control.js";
 import { executeIssuePostCommitActions, issueService, type IssuePostCommitAction } from "./issues.js";
 
-export const CHILD_RESPAWN_LINEAGE_CAP = 3;
+export { CHILD_RESPAWN_LINEAGE_CAP };
 export const CHILD_RESPAWN_EXHAUSTED_CODE = "child_respawn_exhausted";
-const RESPAWN_ORIGIN_ID_PREFIX = "respawn:";
 const RESPAWN_TITLE_PREFIX = /^Respawn \d+: /;
 const RESOLVED_BLOCKER_STATUSES = ["done", "cancelled"];
 const RESPAWN_UNIQUE_INDEX = "issues_respawn_predecessor_uq";
@@ -32,10 +32,6 @@ export type RespawnChildInput = {
 export type RespawnChildResult =
   | { outcome: "respawned"; successorIssueId: string; generation: number; created: boolean }
   | { outcome: "exhausted"; code: typeof CHILD_RESPAWN_EXHAUSTED_CODE };
-
-function respawnOriginId(predecessorId: string) {
-  return `${RESPAWN_ORIGIN_ID_PREFIX}${predecessorId}`;
-}
 
 function activityActor(actor: ChildRespawnActor) {
   return actor.type === "agent"
@@ -69,24 +65,6 @@ async function findSuccessor(db: Db, companyId: string, predecessorId: string) {
     eq(issues.originId, respawnOriginId(predecessorId)),
   ));
   return successor ?? null;
-}
-
-async function loadRespawnLineage(db: Db, predecessor: IssueRow) {
-  const lineage = [predecessor.id];
-  let current: Pick<IssueRow, "originKind" | "originId"> = predecessor;
-  while (
-    current.originKind === CHILD_RESPAWN_ORIGIN_KIND
-    && current.originId?.startsWith(RESPAWN_ORIGIN_ID_PREFIX)
-    && lineage.length <= CHILD_RESPAWN_LINEAGE_CAP
-  ) {
-    const earlierId = current.originId.slice(RESPAWN_ORIGIN_ID_PREFIX.length);
-    const [earlier] = await db.select({ id: issues.id, originKind: issues.originKind, originId: issues.originId }).from(issues)
-      .where(and(eq(issues.companyId, predecessor.companyId), eq(issues.id, earlierId)));
-    if (!earlier) break;
-    lineage.unshift(earlier.id);
-    current = earlier;
-  }
-  return lineage;
 }
 
 async function assertActorMayRespawn(db: Db, predecessor: IssueRow, actor: ChildRespawnActor) {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express from "express";
 import request from "supertest";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agents, companies, createDb, heartbeatRuns, issues } from "@paperclipai/db";
 import {
@@ -164,6 +165,32 @@ describeEmbeddedPostgres("child recovery routes", () => {
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
       expect(res.body.details).toMatchObject({ code: "child_recovery_not_authorized" });
+    });
+
+    it("refuses an agent respawning a healthy child that still has a live run", async () => {
+      const family = await seedFamily();
+      await db.update(issues).set({ status: "in_progress" }).where(eq(issues.id, family.child.id));
+      await seedRun(family.company.id, family.worker.id, family.child.id);
+      const leadRun = await seedRun(family.company.id, family.lead.id, family.grandparent.id);
+
+      const res = await request(createApp(db, agentActor(family.company.id, family.lead.id, leadRun.id)))
+        .post(`/api/issues/${family.child.id}/respawn`).send({ reason: "Looks slow" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(409);
+      expect(res.body.details).toMatchObject({ code: "child_respawn_predecessor_live", issueId: family.child.id });
+      const [child] = await db.select().from(issues).where(eq(issues.id, family.child.id));
+      expect(child!.status).toBe("in_progress");
+    });
+
+    it("lets the board respawn a child that still has a live run", async () => {
+      const family = await seedFamily();
+      await db.update(issues).set({ status: "in_progress" }).where(eq(issues.id, family.child.id));
+      await seedRun(family.company.id, family.worker.id, family.child.id);
+
+      const res = await request(createApp(db, boardActor(family.company.id)))
+        .post(`/api/issues/${family.child.id}/respawn`).send({ reason: "Operator decision" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
     });
 
     it("answers 409 child_respawn_exhausted once the lineage cap is reached", async () => {
