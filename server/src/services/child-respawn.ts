@@ -1,5 +1,5 @@
 import { and, eq, notInArray } from "drizzle-orm";
-import { agents, issueRelations, issues, type Db } from "@paperclipai/db";
+import { activityLog, agents, issueRelations, issues, type Db } from "@paperclipai/db";
 import { CHILD_RESPAWN_ORIGIN_KIND, type ChildHandoff } from "@paperclipai/shared";
 import { conflict, forbidden, notFound } from "../errors.js";
 import { persistActivity, publishActivity, type ActivityPublication } from "./activity-log.js";
@@ -19,7 +19,7 @@ const RESPAWN_UNIQUE_INDEX = "issues_respawn_predecessor_uq";
 
 type IssueRow = typeof issues.$inferSelect;
 
-export type ChildRespawnActor = { type: "agent" | "board"; id: string; runId?: string | null };
+export type ChildRespawnActor = { type: "agent" | "board" | "system"; id: string; runId?: string | null };
 
 export type RespawnChildInput = {
   companyId: string;
@@ -34,9 +34,9 @@ export type RespawnChildResult =
   | { outcome: "exhausted"; code: typeof CHILD_RESPAWN_EXHAUSTED_CODE };
 
 function activityActor(actor: ChildRespawnActor) {
-  return actor.type === "agent"
-    ? { actorType: "agent" as const, actorId: actor.id, agentId: actor.id, runId: actor.runId ?? null }
-    : { actorType: "user" as const, actorId: actor.id, agentId: null, runId: null };
+  if (actor.type === "agent") return { actorType: "agent" as const, actorId: actor.id, agentId: actor.id, runId: actor.runId ?? null };
+  if (actor.type === "system") return { actorType: "system" as const, actorId: actor.id, agentId: null, runId: null };
+  return { actorType: "user" as const, actorId: actor.id, agentId: null, runId: null };
 }
 
 function isRespawnUniqueConflict(error: unknown) {
@@ -132,6 +132,13 @@ function successorDescription(predecessor: IssueRow, handoff: ChildHandoff, inpu
   ].join("\n");
 }
 
+export async function respawnExhaustionAnnounced(db: Db, companyId: string, issueId: string) {
+  const [announced] = await db.select({ id: activityLog.id }).from(activityLog).where(and(
+    eq(activityLog.companyId, companyId), eq(activityLog.entityType, "issue"), eq(activityLog.entityId, issueId),
+    eq(activityLog.action, "issue.child_respawn_exhausted"))).limit(1);
+  return Boolean(announced);
+}
+
 async function escalateExhaustedLineage(db: Db, input: {
   predecessor: IssueRow; lineage: string[]; actor: ChildRespawnActor; reason: string; handoff: ChildHandoff;
 }): Promise<RespawnChildResult> {
@@ -142,6 +149,7 @@ async function escalateExhaustedLineage(db: Db, input: {
     const tx = transaction as unknown as Db;
     await tx.select({ id: issues.id }).from(issues)
       .where(and(eq(issues.companyId, input.predecessor.companyId), eq(issues.id, input.predecessor.id))).for("update");
+    if (await respawnExhaustionAnnounced(tx, input.predecessor.companyId, input.predecessor.id)) return;
     const action = await issueRecoveryActionService(tx).upsertSourceScoped({
       companyId: input.predecessor.companyId,
       sourceIssueId: input.predecessor.id,
@@ -163,6 +171,18 @@ async function escalateExhaustedLineage(db: Db, input: {
       nextAction: `This task was respawned ${generation} times without finishing. Decide whether to change the brief, reassign, or cancel it.`,
       createOnly: true,
     });
+    const comment = await issueService(tx).addComment(
+      input.predecessor.id,
+      `This task has been respawned ${generation} times without finishing, so Paperclip will not respawn it again. The board needs to decide whether to change the brief, reassign it, or cancel it.`,
+      { runId: null },
+      { authorType: "system" },
+      tx,
+    );
+    publications.push((await persistActivity(tx, {
+      companyId: input.predecessor.companyId, ...activityActor(input.actor), action: "issue.comment_added",
+      entityType: "issue", entityId: input.predecessor.id,
+      details: { commentId: comment.id, source: "child_respawn_exhausted" },
+    })).publication);
     publications.push((await persistActivity(tx, {
       companyId: input.predecessor.companyId,
       ...activityActor(input.actor),

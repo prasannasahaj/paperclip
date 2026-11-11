@@ -1,4 +1,5 @@
 import { wakeWaitersOfStalledIssues, type BlockerStallWakeup } from "./blocker-stall-wakeups.js";
+import { respawnStalledChildren, type StalledChildRespawnWakeup, type StalledChildRunCancel } from "./stalled-child-respawn.js";
 import { INTERACTION_DELIVERY_DENIED, isInteractionDeliveryDeniedRun } from "../agent-interaction-delivery.js";
 import { notifyScheduledRetryDispatch } from "../run-dispatch-notifications.js";
 import { OWNER_UNPROVABLE_CAUSE } from "./owner-gone-attestation.js";
@@ -964,6 +965,8 @@ export function recoveryService(
   db: Db,
   deps: {
     enqueueWakeup: RecoveryWakeup;
+    /** Stops a superseded task's live run when Paperclip respawns the task itself. */
+    cancelRun?: StalledChildRunCancel;
     scheduleRecoveryRetry?: (
       runId: string,
       outcome?: StrandedRecoveryOutcome,
@@ -3763,12 +3766,15 @@ export function recoveryService(
       // longer schedules another agent-owned wake for them.
       result.skipped += 1;
     }
+    // A child stalled on an infrastructure fault nobody recovered is respawned by Paperclip itself.
+    const respawns = await respawnStalledChildren(db,
+      { enqueueWakeup: deps.enqueueWakeup as StalledChildRespawnWakeup, cancelRun: deps.cancelRun }, { companyId: opts?.companyId });
     // A child or blocker stalled on a board-owned action: tell whoever waits on it, once per stall.
     const stalls = await wakeWaitersOfStalledIssues(db, deps.enqueueWakeup as BlockerStallWakeup, { companyId: opts?.companyId });
     // A failed delivery is reported so the recovery worker retries this pass.
     // The earliest owed wake of a moved legacy subtask is a deadline of this pass too.
-    const retryAts = [stalls.retryAt, rehome?.nextWakeRetryAt, releasedWriter?.nextWakeRetryAt].filter((at): at is number => typeof at === "number");
-    return { ...result, blockerStallWakes: stalls.woken, blockerStallWakeFailures: stalls.failed,
+    const retryAts = [stalls.retryAt, respawns.retryAt, rehome?.nextWakeRetryAt, releasedWriter?.nextWakeRetryAt].filter((at): at is number => typeof at === "number");
+    return { ...result, stalledChildRespawns: respawns.respawned, blockerStallWakes: stalls.woken, blockerStallWakeFailures: stalls.failed,
       blockerStallRetryAt: retryAts.length ? Math.min(...retryAts) : null };
   }
 
