@@ -451,6 +451,8 @@ export {
   retryWorkspaceExportSchema,
   recoverWorkspaceSchema,
   taskRetrySchema,
+  childHandoffSchema,
+  type ChildHandoff,
   reconstructWorkspaceSchema,
   resumeWorkspaceFinalizationSchema,
   confirmNativeControllerStoppedSchema,
