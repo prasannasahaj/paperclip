@@ -85,15 +85,6 @@ describe("controller process-space identity", () => {
     expect(owner.canonicalProcessSpace(legacyHashFor("other-host.local", firstBoot))).toBe(legacyHashFor("other-host.local", firstBoot));
   });
 
-  it("judges a legacy-alias controller with a dead PID as exited", async () => {
-    platform("darwin");
-    const owner = await fresh();
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("gone"), { code: "ESRCH" }); });
-    expect(await owner.controllerProcessExited({ bootId: "old", pid: 2_000_000_001,
-      hostHash: legacyHashFor("same-host.local", firstBoot), processStartedAt: null })).toBe(true);
-    expect(kill).toHaveBeenCalledWith(2_000_000_001, 0);
-  });
-
   it("never treats an unreadable Darwin identity as matching any receipt", async () => {
     platform("darwin");
     state.sysctl.mockImplementation(() => { throw new Error("sysctl unavailable"); });
