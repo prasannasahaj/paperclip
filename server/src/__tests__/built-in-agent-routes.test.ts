@@ -131,7 +131,43 @@ describe("built-in agent routes", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockBuiltInAgentService.list).toHaveBeenCalledWith(companyId);
     expect(res.body).toEqual([expect.objectContaining({ status: "ready", agentId })]);
-    expect(res.body[0].agent.adapterConfig).toEqual({});
+    expect(res.body[0].agent.adapterConfig).toEqual({ model: "gpt-5.4" });
+  });
+
+  it("exposes only the harness-identifying adapter fields and withholds the rest of the config", async () => {
+    mockBuiltInAgentService.list.mockResolvedValue([
+      builtInState({
+        agent: {
+          ...builtInState().agent,
+          adapterType: "paperclip_runner",
+          adapterConfig: {
+            model: "claude-haiku-4-5",
+            provider: "acpx",
+            acpxAgent: "claude",
+            env: { ANTHROPIC_API_KEY: "secret" },
+            instructionsFilePath: "/home/user/AGENTS.md",
+          },
+          runtimeConfig: { heartbeat: { maxConcurrentRuns: 20 } },
+        },
+      }),
+    ]);
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      companyIds: [companyId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app).get(`/api/companies/${companyId}/built-in-agents`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body[0].agent.adapterConfig).toEqual({
+      model: "claude-haiku-4-5",
+      provider: "acpx",
+      acpxAgent: "claude",
+    });
+    expect(res.body[0].agent.runtimeConfig).toEqual({});
   });
 
   it("denies list requests outside the actor company boundary", async () => {
