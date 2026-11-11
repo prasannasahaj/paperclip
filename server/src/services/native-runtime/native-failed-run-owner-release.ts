@@ -82,7 +82,7 @@ function abandonedOwnerCondition() {
 /** Local owners retain their release deadline. Foreign owners retain the same
  * original deadline until expiry surfaces attention owned by the board. */
 async function localOwnerSpaceCondition() {
-  const processSpaces = currentProcessSpaceAliases();
+  const processSpaces = currentProcessSpaceHash() === "unknown" ? [] : currentProcessSpaceAliases();
   const native = await currentNativeControllerIdentity();
   return or(
     and(eq(nativeRunFinalizations.controllerBootId, native.bootId), eq(nativeRunFinalizations.controllerPid, native.pid)),
