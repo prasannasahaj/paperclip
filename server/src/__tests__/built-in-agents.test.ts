@@ -455,31 +455,27 @@ describeEmbeddedPostgres("built-in agents", () => {
     });
   });
 
-  it("blocks policy-gated built-in reconfiguration instead of applying adapter overrides immediately", async () => {
-    const companyId = await seedCompany();
+  it("applies adapter reconfiguration of a ready built-in directly even when board approval is required for new agents", async () => {
+    const companyId = await seedCompany({ requireApproval: true });
     const builtIns = builtInAgentService(db);
     const ready = await builtIns.ensure(companyId, "briefs", {
       adapterType: "codex_local",
       adapterConfig: { model: "gpt-5.4" },
     });
 
-    await expect(builtIns.provision(companyId, "briefs", {
+    const result = await builtIns.provision(companyId, "briefs", {
       adapterType: "process",
-      adapterConfig: { command: "echo bypass" },
-    })).rejects.toMatchObject({
-      status: 409,
-      details: {
-        code: "built_in_agent_reconfiguration_requires_approval",
-        key: "briefs",
-        agentId: ready.agentId,
-      },
-    });
+      adapterConfig: { command: "echo reconfigured" },
+    }, { requestedByUserId: "board-user" });
 
-    await expect(builtIns.get(companyId, "briefs")).resolves.toMatchObject({
+    expect(result.approval).toBeNull();
+    expect(result.state).toMatchObject({
       status: "ready",
       agentId: ready.agentId,
-      agent: { adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.4" } },
+      agent: { adapterType: "process", adapterConfig: { command: "echo reconfigured" } },
     });
+    const noApprovals = await db.select().from(approvals).where(eq(approvals.companyId, companyId));
+    expect(noApprovals).toHaveLength(0);
   });
 
   it("completes first-time setup of a needs_setup built-in without a fresh board approval", async () => {

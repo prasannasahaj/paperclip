@@ -256,6 +256,24 @@ describe("ConfigureBuiltInAgentModal (PAP-12978)", () => {
     expect(state.agent?.adapterConfig).toEqual(savedConfig);
   });
 
+  it("shows Claude and submits no adapter change for a ready Claude agent served with the redacted status config", async () => {
+    const redactedConfig = { model: "claude-haiku-4-5", provider: "acpx", acpxAgent: "claude" };
+    const state = makeState({
+      status: "ready",
+      agentId: "a1",
+      agent: makeSavedAgent("paperclip_runner", redactedConfig),
+      definition: { ...makeState().definition, defaultAdapterConfig: { model: "claude-haiku-4-5" } },
+    });
+    provisionMock.mockResolvedValue(state);
+    await renderModal(state);
+
+    expect(document.querySelector('[data-testid="adapter-dropdown"]')?.getAttribute("data-value")).toBe("claude_local");
+    flushSync(() => findButton("Configure")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flushReact();
+
+    expect(provisionMock).toHaveBeenCalledWith("c1", "briefs", {});
+  });
+
   it("merges a built-in model edit into the saved native configuration", async () => {
     const savedConfig = { provider: "codex", model: "gpt-5", timeoutSec: 45, modelReasoningEffort: "high", env: { CODEX_HOME: { type: "secret_ref", secretId: "account-1" } } };
     const state = makeState({ status: "ready", agentId: "a1", agent: makeSavedAgent("paperclip_runner", savedConfig) });
