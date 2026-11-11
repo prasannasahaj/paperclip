@@ -82,6 +82,21 @@ export function parsePorcelainZ(status: string) {
   return changed;
 }
 
+async function locateRepositoryRoot(sourceCwd: string) {
+  const options = { ...gitOptions, env: { ...process.env, LC_ALL: "C" } };
+  const prefix = (await execFile("git", ["-C", sourceCwd, "rev-parse", "--show-prefix"], options)).stdout.trim();
+  if (!prefix) return { cloneSource: sourceCwd, folderWithinRepository: "" };
+  const root = (await execFile("git", ["-C", sourceCwd, "rev-parse", "--show-toplevel"], options)).stdout.trim();
+  return { cloneSource: root, folderWithinRepository: path.normalize(prefix) };
+}
+
+async function assertCommittedFolder(folder: string, relativeCwd: string) {
+  if (!relativeCwd) return;
+  const stat = await lstat(folder).catch(() => null);
+  if (!stat?.isDirectory() || stat.isSymbolicLink())
+    throw new Error(`The project folder "${relativeCwd}" has no committed files in its repository, so a fresh attempt cannot start from it. Commit the folder, then retry.`);
+}
+
 /** Seed from committed objects, never from a possibly changing old directory.
  * --no-local also prevents shared objects/hardlinks and copied Git authority.
  * The caller authorizes the source before calling this function. */
@@ -106,7 +121,7 @@ export async function materializeFreshWorkspaceSeed(input: {
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
     if (receipt.runId !== input.runId || receipt.companyId !== input.companyId || receipt.issueId !== input.issueId)
       throw new Error("Fresh workspace seed receipt changed");
-    return destination;
+    return path.join(destination, receipt.relativeCwd ?? "");
   }
   const staging = await mkdtemp(path.join(root, ".seed-"));
   try {
@@ -120,23 +135,27 @@ export async function materializeFreshWorkspaceSeed(input: {
         throw error;
       });
     let commit: string | null = null;
+    let relativeCwd = "";
     if (probe) {
       const ref = input.baseRef || "HEAD";
       const resolved = await execFile("git", ["-C", input.sourceCwd, "rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], gitOptions);
       commit = resolved.stdout.trim();
       if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error("Invalid fresh workspace seed commit");
-      await execFile("git", ["clone", "--no-local", "--no-checkout", "--", input.sourceCwd, staging], gitOptions);
+      const { cloneSource, folderWithinRepository } = await locateRepositoryRoot(input.sourceCwd);
+      relativeCwd = folderWithinRepository;
+      await execFile("git", ["clone", "--no-local", "--no-checkout", "--", cloneSource, staging], gitOptions);
       await execFile("git", ["-C", staging, "-c", "core.hooksPath=/dev/null", "checkout", "--detach", commit], gitOptions);
+      await assertCommittedFolder(path.join(staging, relativeCwd), relativeCwd);
       // The old local directory is not a publication target for this attempt.
       await execFile("git", ["-C", staging, "remote", "remove", "origin"], gitOptions);
       if (input.repoUrl) await execFile("git", ["-C", staging, "remote", "add", "origin", input.repoUrl], gitOptions);
     }
     await writeFile(receiptPath, JSON.stringify({
       schema: "paperclip.fresh-workspace-seed.v1", companyId: input.companyId,
-      issueId: input.issueId, runId: input.runId, commit,
+      issueId: input.issueId, runId: input.runId, commit, relativeCwd,
     }), { mode: 0o600 });
     await rename(staging, destination);
-    return destination;
+    return path.join(destination, relativeCwd);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
