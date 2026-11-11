@@ -1167,6 +1167,7 @@ export type {
   IssueBlockedInboxState,
   IssueRecoveryAction,
   IssueBlockerStalledWakeContext,
+  IssueBlockerStalledRespawnOffer,
   IssueWatchdog,
   IssueWatchdogStatus,
   IssueWatchdogSummary,

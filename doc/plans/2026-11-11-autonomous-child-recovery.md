@@ -127,3 +127,11 @@ Root cause of TAC-98 on this machine. `controller-process-identity.ts` hashes `o
 - Spec coverage: respawn by parent (Task 3), ignore cancelled and recreate with partial output (Tasks 2-3), flexible on ambiguity (isolation instead of proof; Task 1 removes the false ambiguity), autonomy trigger (Task 4).
 - The cancelled-run hole in the containment settle (`native_controller_containment_stale`) is deliberately not fixed: once Task 3 exists, a parent respawns and cancels the predecessor, which is the exit the operator used by hand.
 - Local write-fencing for same-workspace retry is out of scope; it changes persisted run state and needs its own design under `rules/upgrade-safe-run-state.mdc`.
+
+## Implementation Notes (2026-11-11)
+
+- Task 1 shipped in `971dc7b043`; Tasks 2 and 3 in `ec1d09a84c` and `725c5283ba`; Task 4 and the live-run guard in the commit after them.
+- Respawn by an agent is refused with `child_respawn_predecessor_live` while the child has a live run and is not `blocked`. Only the board may respawn over a live run. Reason: respawn cancels the predecessor's run, and agents may not stop each other's healthy runs.
+- The stalled-child wake carries `blockerStall.respawn` (`available`, `generation`, `remaining`, `handoffPath`, `respawnPath`, `guidance`) for the `child` relation only. A `blocker` relation gets no offer.
+- Lineage helpers live in `server/src/services/child-respawn-lineage.ts` so the wake sweep does not import the respawn service.
+- Open follow-ups: raw hostname comparisons in `owner-proof.ts:287` and `native-workspace-owner-stop-proof.ts:60`; local write-fencing for same-workspace retry; board UI for respawn.

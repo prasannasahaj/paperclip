@@ -89,6 +89,51 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
     expect(later[1]!.input.contextSnapshot.blockerStall.recoveryAction.id).toBe(again.id);
   });
 
+  it("tells the parent it can respawn the stalled child and how many respawns remain", async () => {
+    const f = await fixture();
+    const { calls, enqueueWakeup } = wakeRecorder();
+    await recoveryService(db, { enqueueWakeup: enqueueWakeup as never }).reconcileActiveRecoveryActions({ companyId: f.companyId });
+    const [wake] = calls.filter(call => call.input.reason === ISSUE_BLOCKER_STALLED_WAKE_REASON);
+    expect(wake!.input.contextSnapshot.blockerStall.respawn).toMatchObject({
+      available: true, generation: 1, remaining: 3,
+      handoffPath: `/api/issues/${f.child.id}/handoff`, respawnPath: `/api/issues/${f.child.id}/respawn`,
+    });
+  });
+
+  it("reports no respawns remaining once the child's lineage has used all of them", async () => {
+    const f = await fixture();
+    let latest = f.child;
+    for (let generation = 1; generation <= 3; generation += 1) {
+      const [successor] = await db.insert(issues).values({ companyId: f.companyId, parentId: f.parent.id,
+        title: `Respawn ${generation}: Child`, status: "blocked", assigneeAgentId: f.childAgent, originKind: "respawn",
+        originId: `respawn:${latest.id}` }).returning();
+      latest = successor!;
+    }
+    await db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, f.child.id));
+    await db.insert(issueRecoveryActions).values({ companyId: f.companyId, sourceIssueId: latest.id, kind: "run_recovery",
+      status: "escalated", ownerType: "board", cause: "execution_recovery_budget_exhausted", fingerprint: "fixture-last",
+      nextAction: "Retry" });
+    const { calls, enqueueWakeup } = wakeRecorder();
+    await recoveryService(db, { enqueueWakeup: enqueueWakeup as never }).reconcileActiveRecoveryActions({ companyId: f.companyId });
+    const wakes = calls.filter(call => call.input.reason === ISSUE_BLOCKER_STALLED_WAKE_REASON
+      && call.input.contextSnapshot.blockerStall.stalledIssueId === latest.id);
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0]!.input.contextSnapshot.blockerStall.respawn).toMatchObject({ available: false, generation: 4, remaining: 0 });
+  });
+
+  it("offers no respawn to the assignee of an issue the stalled one merely blocks", async () => {
+    const f = await fixture();
+    const [dependent] = await db.insert(issues).values({ companyId: f.companyId, title: "Dependent", status: "blocked",
+      assigneeAgentId: f.parentAgent }).returning();
+    await db.insert(issueRelations).values({ companyId: f.companyId, issueId: f.child.id, relatedIssueId: dependent!.id, type: "blocks" });
+    await db.update(issues).set({ parentId: null }).where(eq(issues.id, f.child.id));
+    const { calls, enqueueWakeup } = wakeRecorder();
+    await recoveryService(db, { enqueueWakeup: enqueueWakeup as never }).reconcileActiveRecoveryActions({ companyId: f.companyId });
+    const [wake] = calls.filter(call => call.input.reason === ISSUE_BLOCKER_STALLED_WAKE_REASON);
+    expect(wake!.input.contextSnapshot.blockerStall.relation).toBe("blocker");
+    expect(wake!.input.contextSnapshot.blockerStall.respawn).toBeUndefined();
+  });
+
   it("wakes the assignee of an issue the stalled one blocks", async () => {
     const f = await fixture();
     const dependentAgent = randomUUID();

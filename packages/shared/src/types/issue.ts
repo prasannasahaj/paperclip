@@ -640,6 +640,16 @@ export interface IssueBlockerStalledWakeContext {
     ownerType: string;
     nextAction: string;
   };
+  respawn?: IssueBlockerStalledRespawnOffer;
+}
+
+export interface IssueBlockerStalledRespawnOffer {
+  available: boolean;
+  generation: number;
+  remaining: number;
+  handoffPath: string;
+  respawnPath: string;
+  guidance: string;
 }
 
 export interface IssueRecoveryAction {

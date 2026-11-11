@@ -31,8 +31,9 @@
  */
 import { and, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql, type Placeholder } from "drizzle-orm";
 import { agents, agentWakeupRequests, executionWorkspaces, heartbeatRuns, issueRecoveryActions, issueRelations, issues, type Db } from "@paperclipai/db";
-import { ISSUE_BLOCKER_STALLED_WAKE_REASON, readRemoteWorkspaceAuthority, type IssueBlockerStalledWakeContext,
-  type IssueBlockerStallRelation } from "@paperclipai/shared";
+import { ISSUE_BLOCKER_STALLED_WAKE_REASON, readRemoteWorkspaceAuthority, type IssueBlockerStalledRespawnOffer,
+  type IssueBlockerStalledWakeContext, type IssueBlockerStallRelation } from "@paperclipai/shared";
+import { readRespawnAllowance } from "../child-respawn-lineage.js";
 import { logActivity } from "../activity-log.js";
 import { parseHeartbeatPolicy } from "../heartbeat/timer-policy.js";
 import { authorizationService } from "../authorization.js";
@@ -112,6 +113,7 @@ async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS_PER_PA
     kind: issueRecoveryActions.kind, cause: issueRecoveryActions.cause, status: issueRecoveryActions.status,
     ownerType: issueRecoveryActions.ownerType, nextAction: issueRecoveryActions.nextAction,
     issueId: issues.id, identifier: issues.identifier, title: issues.title, issueStatus: issues.status, parentId: issues.parentId,
+    originKind: issues.originKind, originId: issues.originId,
     projectId: issues.projectId, assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId,
   }).from(issueRecoveryActions)
     .innerJoin(issues, and(eq(issues.id, issueRecoveryActions.sourceIssueId), eq(issues.companyId, issueRecoveryActions.companyId)))
@@ -253,6 +255,15 @@ function stallContext(stall: StallRow, relation: IssueBlockerStallRelation): Iss
   };
 }
 
+async function childRespawnOffer(db: Db, stall: StallRow): Promise<IssueBlockerStalledRespawnOffer> {
+  const allowance = await readRespawnAllowance(db, { id: stall.issueId, companyId: stall.companyId,
+    originKind: stall.originKind, originId: stall.originId });
+  const guidance = allowance.available
+    ? "You may recover this child yourself without the board. Read the handoff, check the branch and merge request for work already done, then respawn it with a reason and an approach note that changes the approach if earlier attempts failed. A respawn creates a new task in a fresh workspace and cancels this one."
+    : "This child has used all of its respawns. Escalate to the board with what the attempts found and what you would change.";
+  return { ...allowance, handoffPath: `/api/issues/${stall.issueId}/handoff`, respawnPath: `/api/issues/${stall.issueId}/respawn`, guidance };
+}
+
 /**
  * The children and blockers of `issueId` that are stalled on the board, for
  * the waiting issue's own page: the board sees them without opening each one.
@@ -379,7 +390,10 @@ export async function wakeWaitersOfStalledIssues(db: Db, enqueueWakeup: BlockerS
         }
         // A private stalled issue's details never reach an agent that cannot read it.
         const readable = await agentCanRead(waiter.assigneeAgentId!, waiter.responsibleUserId, stall);
-        const context = readable ? stallContext(stall, waiter.relation) : redactedStallContext(stall, waiter.relation);
+        const respawn = readable && waiter.relation === "child" ? await childRespawnOffer(db, stall) : null;
+        const context = readable
+          ? { ...stallContext(stall, waiter.relation), ...(respawn ? { respawn } : {}) }
+          : redactedStallContext(stall, waiter.relation);
         try {
           const wake = await enqueueWakeup(waiter.assigneeAgentId!, {
             source: "automation", triggerDetail: "system", reason: ISSUE_BLOCKER_STALLED_WAKE_REASON,

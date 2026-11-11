@@ -10458,6 +10458,11 @@ export function issueRoutes(
     await assertChildRecoveryAuthority(req, issue, "issue:mutate");
     const actor = getActorInfo(req);
     const activeRun = await resolveActiveIssueRun(issue);
+    if (req.actor.type === "agent" && activeRun && !["blocked", "cancelled"].includes(issue.status)) {
+      throw conflict("This task still has a live run. Wait for it to fail or stall before respawning it, or ask the board.", {
+        code: "child_respawn_predecessor_live", issueId: issue.id, runId: activeRun.id,
+      });
+    }
     const result = await respawnChild(db, {
       companyId: issue.companyId,
       predecessorIssueId: issue.id,
