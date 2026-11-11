@@ -29,7 +29,7 @@
  * reservation would still refuse that hold (remoteWorkspaceHoldRefusesStart):
  * its run could only fail the same way. It is woken once the hold settles.
  */
-import { and, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql, type Placeholder } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, notInArray, or, sql, type Placeholder } from "drizzle-orm";
 import { agents, agentWakeupRequests, executionWorkspaces, heartbeatRuns, issueRecoveryActions, issueRelations, issues, type Db } from "@paperclipai/db";
 import { ISSUE_BLOCKER_STALLED_WAKE_REASON, readRemoteWorkspaceAuthority, type IssueBlockerStalledRespawnOffer,
   type IssueBlockerStalledWakeContext, type IssueBlockerStallRelation } from "@paperclipai/shared";
@@ -103,15 +103,18 @@ export function recoveryActionSweepCondition() {
   )!;
 }
 
-type StallFilter = { companyId?: string | null; issueId?: string | null; issueIds?: readonly string[]; afterActionId?: string | null };
+export type StallFilter = {
+  companyId?: string | null; issueId?: string | null; issueIds?: readonly string[]; afterActionId?: string | null;
+  causes?: readonly string[]; issueStatus?: string; childrenOnly?: boolean;
+};
 
 /** The stalled issues matching `filter` and the recovery action each one waits on. */
-async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS_PER_PASS) {
+export async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS_PER_PASS) {
   if (filter.issueIds && filter.issueIds.length === 0) return [];
   return db.select({
     actionId: issueRecoveryActions.id, companyId: issueRecoveryActions.companyId,
     kind: issueRecoveryActions.kind, cause: issueRecoveryActions.cause, status: issueRecoveryActions.status,
-    ownerType: issueRecoveryActions.ownerType, nextAction: issueRecoveryActions.nextAction,
+    actionCreatedAt: issueRecoveryActions.createdAt, ownerType: issueRecoveryActions.ownerType, nextAction: issueRecoveryActions.nextAction,
     issueId: issues.id, identifier: issues.identifier, title: issues.title, issueStatus: issues.status, parentId: issues.parentId,
     originKind: issues.originKind, originId: issues.originId,
     projectId: issues.projectId, assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId,
@@ -122,6 +125,9 @@ async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS_PER_PA
       filter.issueId ? eq(issueRecoveryActions.sourceIssueId, filter.issueId) : undefined,
       filter.issueIds ? inArray(issueRecoveryActions.sourceIssueId, [...filter.issueIds]) : undefined,
       filter.afterActionId ? gt(issueRecoveryActions.id, filter.afterActionId) : undefined,
+      filter.causes ? inArray(issueRecoveryActions.cause, [...filter.causes]) : undefined,
+      filter.issueStatus ? eq(issues.status, filter.issueStatus) : undefined,
+      filter.childrenOnly ? isNotNull(issues.parentId) : undefined,
       notInArray(issues.status, TERMINAL_ISSUE_STATUSES),
       or(
         and(inArray(issueRecoveryActions.status, ["active", "escalated"]),
@@ -139,7 +145,7 @@ async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS_PER_PA
     .limit(limit);
 }
 
-type StallRow = Awaited<ReturnType<typeof readStalls>>[number];
+export type StallRow = Awaited<ReturnType<typeof readStalls>>[number];
 
 type Bound<Value> = Value | Placeholder;
 export type StallWaiterPageBinding = {
@@ -259,7 +265,7 @@ async function childRespawnOffer(db: Db, stall: StallRow): Promise<IssueBlockerS
   const allowance = await readRespawnAllowance(db, { id: stall.issueId, companyId: stall.companyId,
     originKind: stall.originKind, originId: stall.originId });
   const guidance = allowance.available
-    ? "You may recover this child yourself without the board. Read the handoff, check the branch and merge request for work already done, then respawn it with a reason and an approach note that changes the approach if earlier attempts failed. A respawn creates a new task in a fresh workspace and cancels this one."
+    ? "Paperclip respawns a child stalled on an infrastructure fault by itself after a short wait, so you do not need the board. You can act first with a better plan: read the handoff, check the branch and merge request for work already done, then respawn it with a reason and an approach note that changes the approach if earlier attempts failed. A respawn creates a new task in a fresh workspace and cancels this one."
     : "This child has used all of its respawns. Escalate to the board with what the attempts found and what you would change.";
   return { ...allowance, handoffPath: `/api/issues/${stall.issueId}/handoff`, respawnPath: `/api/issues/${stall.issueId}/respawn`, guidance };
 }

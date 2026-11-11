@@ -135,3 +135,15 @@ Root cause of TAC-98 on this machine. `controller-process-identity.ts` hashes `o
 - The stalled-child wake carries `blockerStall.respawn` (`available`, `generation`, `remaining`, `handoffPath`, `respawnPath`, `guidance`) for the `child` relation only. A `blocker` relation gets no offer.
 - Lineage helpers live in `server/src/services/child-respawn-lineage.ts` so the wake sweep does not import the respawn service.
 - Open follow-ups: raw hostname comparisons in `owner-proof.ts:287` and `native-workspace-owner-stop-proof.ts:60`; local write-fencing for same-workspace retry; board UI for respawn.
+
+## Task 5: Paperclip respawns stalled children itself (2026-11-11)
+
+Text instructions to the parent agent are not the mechanism. The recovery sweep (`reconcileActiveRecoveryActions`) now runs `respawnStalledChildren` (`server/src/services/recovery/stalled-child-respawn.ts`) before it wakes waiters.
+
+- **Eligible:** a `blocked` child (it has a parent) whose latest recovery action is open or board-owned-and-resolved-as-blocked, with a cause in `AUTO_RESPAWN_CAUSES`: `native_restart_recovery_blocked`, `native_session_retry_exhausted`, `native_session_interrupted`, `execution_finalization_deadline_exceeded`. The list is the policy knob. It deliberately excludes causes where unsynced work or an uncertain external action could be lost or repeated (`native_workspace_sync_out_*`, `uncertain_external_action`, `uncertain_provider_action`), setup and budget causes, and the legacy reconciliation causes.
+- **Quiet period:** `AUTO_RESPAWN_QUIET_PERIOD_MS` (10 minutes) from the action's creation. The parent is woken first and may respawn with a better approach note. The pass returns the due time as `blockerStallRetryAt`, so the worker sweeps again.
+- **Actor:** `system` (`ChildRespawnActor` gained it). The same `respawnChild` runs, so pause holds, budgets and agent invokability still refuse, the lineage cap still applies, and respawn stays idempotent through the predecessor's unique index. A refusal is retried every 10 minutes.
+- **Live run:** the predecessor's live run is cancelled through a `cancelRun` dependency bound to `cancelRunInternal` in `heartbeat.ts`, after the successor exists. Successor assignee is woken with `issue_assigned`.
+- **Exhaustion:** `upsertSourceScoped({ createOnly })` returns the issue's existing active action, and a stalled child always has one, so exhaustion cannot add a second board action. It now posts one system comment and one `issue.child_respawn_exhausted` activity row, once (`respawnExhaustionAnnounced`), and leaves the original stall in place for the board.
+- **Previous-release story:** no schema or persisted run state change. The only new rows are ordinary issues, comments and activity. A server that predates this simply never runs the pass.
+- **Not done:** an instance or company switch to turn automatic respawn off; per-company allowlists.
