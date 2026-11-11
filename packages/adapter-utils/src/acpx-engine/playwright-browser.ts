@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -26,6 +27,12 @@ export interface PlaywrightBrowserLaunch {
   outputDir: string;
   storageStatePath: string;
   loginRestored: boolean;
+}
+
+function shortSocketsDir(instanceRoot: string): string | null {
+  if (process.platform === "win32") return null;
+  const instanceHash = createHash("sha1").update(instanceRoot).digest("hex").slice(0, 8);
+  return `/tmp/pw-${instanceHash}`;
 }
 
 export function defaultPlaywrightStorageStatePath(instanceRoot: string): string {
@@ -90,6 +97,8 @@ export function buildPlaywrightBrowserLaunch(input: {
     const value = input.env[name];
     if (value) environment.push({ name, value });
   }
+  const socketsDir = shortSocketsDir(input.instanceRoot);
+  if (socketsDir) environment.push({ name: "PWTEST_SOCKETS_DIR", value: socketsDir });
 
   return {
     server: {
