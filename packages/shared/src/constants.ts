@@ -421,6 +421,8 @@ export const RESPONSIBILITY_STATUS_UPDATE_ORIGIN_KIND = "responsibility_status_u
 export const RESPONSIBILITY_DASHBOARD_ORIGIN_KIND = "responsibility_dashboard";
 export const ONBOARDING_CHAT_ORIGIN_KIND = "onboarding_chat";
 
+export const CHILD_RESPAWN_ORIGIN_KIND = "respawn";
+
 export const ISSUE_ORIGIN_KINDS = [
   "manual",
   "routine_execution",
@@ -438,6 +440,7 @@ export const ISSUE_ORIGIN_KINDS = [
   AUTOMATION_CONVERSATION_ORIGIN_KIND,
   RESPONSIBILITY_STATUS_UPDATE_ORIGIN_KIND,
   RESPONSIBILITY_DASHBOARD_ORIGIN_KIND,
+  CHILD_RESPAWN_ORIGIN_KIND,
 ] as const;
 export type BuiltInIssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 export type PluginIssueOriginKind = `plugin:${string}`;
