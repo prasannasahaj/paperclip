@@ -30,6 +30,8 @@ import { AgentIdentity } from "@/components/AgentIdentity";
 import { clearLegacyChatMessageRequests } from "@/lib/chat-message-request";
 import { agentChatDraft } from "@/lib/agent-chat-draft";
 import { trackRecentProject } from "@/lib/recent-projects";
+import { deriveMonitorState } from "../lib/issue-monitor";
+import { RETRY_NOW_OUTCOME_HEADLINE } from "../hooks/useRetryNowMutation";
 import { ExecutionBlockerNotice } from "../components/ExecutionBlockerNotice";
 import type { TaskComposerPause } from "../components/task-chat/TaskChatPausedTakeover";
 import { TaskDetailTasksPanel } from "@/components/task-detail/TaskDetailTasksPanel";
@@ -5015,21 +5017,31 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     },
   });
 
+  const waitingOnScheduledRetry = issue ? deriveMonitorState(issue).source === "scheduled-retry" : false;
   const checkIssueMonitorNow = useMutation({
     mutationKey: ["check-issue-monitor-now", issueId],
-    mutationFn: () => issuesApi.checkMonitorNow(issueId!),
-    onSuccess: () => {
+    mutationFn: async () => {
+      if (waitingOnScheduledRetry) return issuesApi.retryScheduledRetryNow(issueId!);
+      await issuesApi.checkMonitorNow(issueId!);
+      return null;
+    },
+    onSuccess: (retryNow) => {
       invalidateIssueDetail();
       invalidateIssueRunState();
       invalidateIssueCollections();
-      pushToast({
+      pushToast(retryNow ? {
+        title: RETRY_NOW_OUTCOME_HEADLINE[retryNow.outcome],
+        body: retryNow.message,
+        tone: retryNow.outcome === "promoted" || retryNow.outcome === "already_promoted" ? "success"
+          : retryNow.outcome === "gate_suppressed" ? "error" : "info",
+      } : {
         title: "Monitor check queued",
         tone: "success",
       });
     },
     onError: (err) => {
       pushToast({
-        title: "Monitor check failed",
+        title: waitingOnScheduledRetry ? "Couldn't retry now" : "Monitor check failed",
         body:
           err instanceof Error
             ? err.message

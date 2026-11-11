@@ -79,6 +79,7 @@ const mockIssuesApi = vi.hoisted(() => ({
   listAttachments: vi.fn(),
   listWorkProducts: vi.fn(),
   checkMonitorNow: vi.fn(),
+  retryScheduledRetryNow: vi.fn(),
   listFeedbackVotes: vi.fn(),
   listInteractions: vi.fn(),
   getQueuedComments: vi.fn(),
@@ -1390,6 +1391,7 @@ describe("IssueDetail", () => {
     mockIssuesApi.recoverWorkspace.mockReset();
     mockIssuesApi.retryTask.mockReset();
     mockIssuesApi.checkMonitorNow.mockReset();
+    mockIssuesApi.retryScheduledRetryNow.mockReset();
     mockIssuesApi.listFeedbackVotes.mockResolvedValue([]);
     mockIssuesApi.listInteractions.mockResolvedValue([]);
     mockIssuesApi.getQueuedComments.mockResolvedValue(
@@ -1498,6 +1500,23 @@ describe("IssueDetail", () => {
     await act(async () => Array.from(document.querySelectorAll("button")).find(b => b.textContent === "Cancel monitor")!.click());
     await waitForAssertion(() => expect(mockIssuesApi.update).toHaveBeenCalledWith(monitored.id, { expectedExecutionPolicy: policy, executionPolicy: preservedPolicy }));
     await waitForAssertion(() => expect(container.querySelector('[aria-label="Cancel monitor"]')).toBeNull());
+  });
+
+  it("retries a scheduled agent retry instead of checking a monitor that does not exist", async () => {
+    const scheduledRetry = { runId: "run-1", status: "scheduled_retry", agentId: "agent-1", agentName: "Agent",
+      retryOfRunId: null, scheduledRetryAt: new Date(Date.now() + 60_000).toISOString(), scheduledRetryAttempt: 1,
+      scheduledRetryReason: "transient_failure" } as Issue["scheduledRetry"];
+    mockIssuesApi.get.mockResolvedValue(createIssue({ status: "in_progress", scheduledRetry }));
+    mockIssuesApi.retryScheduledRetryNow.mockResolvedValue({ outcome: "promoted", message: "Retry started", scheduledRetry: null });
+    await act(async () => renderIssueView());
+    let button: HTMLButtonElement | undefined;
+    await waitForAssertion(() => {
+      button = Array.from(container.querySelectorAll("button")).find((entry) => entry.textContent === "Check now");
+      expect(button).toBeTruthy();
+    });
+    await act(async () => button!.click());
+    await waitForAssertion(() => expect(mockIssuesApi.retryScheduledRetryNow).toHaveBeenCalledWith("PAP-1"));
+    expect(mockIssuesApi.checkMonitorNow).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("keeps monitor errors on the checked task (late response: %s)", async (lateResponse) => {
