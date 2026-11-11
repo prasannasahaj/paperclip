@@ -162,6 +162,9 @@ importers:
       '@paperclipai/shared':
         specifier: workspace:*
         version: link:../shared
+      '@playwright/mcp':
+        specifier: 0.0.85
+        version: 0.0.85
       acpx:
         specifier: 0.22.0
         version: 0.22.0(patch_hash=7cirnxnu5r6knlf33oxlyqv52u)
@@ -3887,6 +3890,11 @@ packages:
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
+
+  '@playwright/mcp@0.0.85':
+    resolution: {integrity: sha512-bSfECMbLXhJdWkGhLzNMxTZuazG+9IDJ679gflji3yyD94e7ARnGdqmJmG6lTPB+gYX+OiFLmX5myBl62+wZEw==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   '@playwright/test@1.62.1':
     resolution: {integrity: sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==}
@@ -8347,8 +8355,18 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  playwright-core@1.66.0-alpha-2026-11-09:
+    resolution: {integrity: sha512-HZVc/E3nqrasH7PPvJNwc7aCNsKXKjvtViZBpeFfopGOeB0zr3r5q4TKfqzkrdIcCKWCulyLVVGtla/LYbmxUQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   playwright@1.62.1:
     resolution: {integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.66.0-alpha-2026-11-09:
+    resolution: {integrity: sha512-raaHhtTYsm9ydMdGa11MEIwI8KM9RP4CuyvAb/lbd6e3bYhsBHXPMVGvyYJWldQxwUgMYnngY2VY5vCpimB2Dg==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -12122,6 +12140,11 @@ snapshots:
       shiki: 4.4.3
 
   '@pinojs/redact@0.4.0': {}
+
+  '@playwright/mcp@0.0.85':
+    dependencies:
+      playwright: 1.66.0-alpha-2026-11-09
+      playwright-core: 1.66.0-alpha-2026-11-09
 
   '@playwright/test@1.62.1':
     dependencies:
@@ -16773,11 +16796,17 @@ snapshots:
 
   playwright-core@1.62.1: {}
 
+  playwright-core@1.66.0-alpha-2026-11-09: {}
+
   playwright@1.62.1:
     dependencies:
       playwright-core: 1.62.1
     optionalDependencies:
       fsevents: 2.3.2
+
+  playwright@1.66.0-alpha-2026-11-09:
+    dependencies:
+      playwright-core: 1.66.0-alpha-2026-11-09
 
   points-on-curve@0.2.0: {}
 

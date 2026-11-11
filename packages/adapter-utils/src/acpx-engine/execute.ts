@@ -130,6 +130,7 @@ import {
   DEFAULT_ACP_ENGINE_TIMEOUT_SEC,
   DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
 } from "./constants.js";
+import { buildPlaywrightBrowserLaunch, readPlaywrightBrowserConfig } from "./playwright-browser.js";
 import type {
   AcpRunContext,
   AcquiredRunResources,
@@ -821,6 +822,43 @@ export async function referencedSourceContentSignature(
     return `unreadable:${String(error)}`;
   }
   return hash.digest("hex").slice(0, 16);
+}
+
+async function attachPlaywrightBrowserServer(input: {
+  config: Record<string, unknown>;
+  acpxAgent: string;
+  executionTargetIsRemote: boolean;
+  instanceRoot: string;
+  stateDir: string;
+  runId: string;
+  env: Record<string, string>;
+  mcpServers: NonNullable<AcpRuntimeOptions["mcpServers"]>;
+  onLog: AdapterExecutionContext["onLog"];
+}): Promise<void> {
+  const browser = readPlaywrightBrowserConfig(input.config);
+  if (!browser.enabled) return;
+  if (input.acpxAgent !== "claude" || input.executionTargetIsRemote) {
+    await input.onLog(
+      "stderr",
+      "[paperclip] Browser is only available to local Claude runs; skipping the Playwright browser server.\n",
+    );
+    return;
+  }
+  const launch = buildPlaywrightBrowserLaunch({
+    config: browser,
+    instanceRoot: input.instanceRoot,
+    stateDir: input.stateDir,
+    runId: input.runId,
+    env: input.env,
+  });
+  input.mcpServers.push(launch.server);
+  const login = launch.loginRestored
+    ? `restoring saved login from ${launch.storageStatePath}`
+    : `no saved login at ${launch.storageStatePath}; the browser starts signed out`;
+  await input.onLog(
+    "stdout",
+    `[paperclip] Playwright browser (${browser.headed ? "headed" : "headless"}) ready; ${login}.\n`,
+  );
 }
 
 function defaultPaperclipInstanceDir(): string {
@@ -2112,6 +2150,17 @@ async function buildRuntime(input: {
   if (requestedModel && acpxAgent === "claude" && !env.ANTHROPIC_MODEL) {
     env.ANTHROPIC_MODEL = requestedModel;
   }
+  await attachPlaywrightBrowserServer({
+    config,
+    acpxAgent,
+    executionTargetIsRemote,
+    instanceRoot: defaultPaperclipInstanceDir(),
+    stateDir,
+    runId,
+    env,
+    mcpServers,
+    onLog: input.ctx.onLog,
+  });
   // ACP `mcpServers` entries carry no per-server timeout, so bound Claude's
   // MCP tool calls through its env setting instead.
   if (acpxAgent === "claude" && mcpServers.length > 0 && !env.MCP_TOOL_TIMEOUT) {

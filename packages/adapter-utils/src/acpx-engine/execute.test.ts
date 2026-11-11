@@ -3208,6 +3208,53 @@ describe("shared ACPX engine runtime behavior", () => {
     expect(envOf(codex).MCP_TOOL_TIMEOUT).toBeUndefined();
   });
 
+  describe("Playwright browser server", () => {
+    async function claudeConfig(browser?: Record<string, unknown>) {
+      const root = await makeTempRoot();
+      return {
+        agent: "claude",
+        agentCommand: "node ./fake-acp.js",
+        cwd: root,
+        stateDir: path.join(root, "state"),
+        paperclipRuntimeSkills: [],
+        paperclipSkillSync: { desiredSkills: [] },
+        ...(browser ? { browser } : {}),
+      };
+    }
+
+    it("attaches an isolated headless browser to local Claude runs that enable it", async () => {
+      const run = await runExecutor(await claudeConfig({ enabled: true }));
+      const servers = run.runtimeOptions[0]?.mcpServers as Array<Record<string, unknown>>;
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({ name: "Playwright browser", command: process.execPath });
+      expect(servers[0]?.args).toEqual(expect.arrayContaining(["--isolated", "--headless"]));
+    });
+
+    it("attaches no browser when the agent has not enabled it", async () => {
+      const run = await runExecutor(await claudeConfig());
+      expect(run.runtimeOptions[0]?.mcpServers).toEqual([]);
+    });
+
+    it("attaches no browser for agents other than Claude", async () => {
+      const config = { ...(await claudeConfig({ enabled: true })), agent: "codex" };
+      const run = await runExecutor(config);
+      expect(run.runtimeOptions[0]?.mcpServers).toEqual([]);
+    });
+
+    it("keeps the session fingerprint identical with and without the browser", async () => {
+      const base = await claudeConfig();
+      const without = await runExecutor(base);
+      const withBrowser = await runExecutor({ ...base, browser: { enabled: true } });
+      expect(withBrowser.result.sessionParams?.configFingerprint).toBe(without.result.sessionParams?.configFingerprint);
+    });
+
+    it("bounds Claude MCP tool calls because a browser server is attached", async () => {
+      const run = await runExecutor(await claudeConfig({ enabled: true }));
+      const env = run.meta[0]?.env as Record<string, string>;
+      expect(env.MCP_TOOL_TIMEOUT).toBe(String(ACPX_CLAUDE_MCP_TOOL_TIMEOUT_MS));
+    });
+  });
+
   it("injects runtime MCP servers and fingerprints their identity without persisting bearer tokens", async () => {
     const root = await makeTempRoot();
     const baseConfig = {
