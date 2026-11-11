@@ -127,4 +127,63 @@ describeEmbeddedPostgres("child recovery routes", () => {
       expect(res.body.verifyBeforeRepeating).toEqual([]);
     });
   });
+
+  describe("POST /issues/:id/respawn", () => {
+    async function seedRespawnChain(family: Awaited<ReturnType<typeof seedFamily>>, length: number) {
+      let latest = family.child;
+      for (let generation = 1; generation <= length; generation += 1) {
+        const [successor] = await db.insert(issues).values({
+          companyId: family.company.id, parentId: family.parent.id, title: `Respawn ${generation}: Child`, status: "todo",
+          assigneeAgentId: family.worker.id, responsibleUserId: "board-user", originKind: "respawn", originId: `respawn:${latest.id}`,
+        }).returning();
+        latest = successor!;
+      }
+      return latest;
+    }
+
+    it("respawns for an ancestor agent and replays the same successor", async () => {
+      const family = await seedFamily();
+      const run = await seedRun(family.company.id, family.lead.id, family.grandparent.id);
+      const app = createApp(db, agentActor(family.company.id, family.lead.id, run.id));
+
+      const first = await request(app).post(`/api/issues/${family.child.id}/respawn`).send({ reason: "Controller vanished" });
+      const replay = await request(app).post(`/api/issues/${family.child.id}/respawn`).send({ reason: "Controller vanished" });
+
+      expect(first.status, JSON.stringify(first.body)).toBe(201);
+      expect(first.body).toMatchObject({ outcome: "respawned", generation: 1, created: true });
+      expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+      expect(replay.body).toMatchObject({ successorIssueId: first.body.successorIssueId, created: false });
+    });
+
+    it("refuses an unrelated agent", async () => {
+      const family = await seedFamily();
+      const run = await seedRun(family.company.id, family.stranger.id, family.strangerTask.id);
+
+      const res = await request(createApp(db, agentActor(family.company.id, family.stranger.id, run.id)))
+        .post(`/api/issues/${family.child.id}/respawn`).send({ reason: "Taking over" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.details).toMatchObject({ code: "child_recovery_not_authorized" });
+    });
+
+    it("answers 409 child_respawn_exhausted once the lineage cap is reached", async () => {
+      const family = await seedFamily();
+      const third = await seedRespawnChain(family, 3);
+
+      const res = await request(createApp(db, boardActor(family.company.id)))
+        .post(`/api/issues/${third.id}/respawn`).send({ reason: "Still failing" });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(409);
+      expect(res.body.details).toMatchObject({ code: "child_respawn_exhausted", issueId: third.id });
+    });
+
+    it("rejects a body without a reason", async () => {
+      const family = await seedFamily();
+
+      const res = await request(createApp(db, boardActor(family.company.id)))
+        .post(`/api/issues/${family.child.id}/respawn`).send({});
+
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+    });
+  });
 });
