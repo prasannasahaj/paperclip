@@ -1,6 +1,8 @@
 # Recovering a stuck or failed child task
 
-Use this when you are woken with `issue_blocker_stalled` for a child you created or whose parent chain you are assigned to, or when a child failed, was cancelled or went silent. You do not need the board for this. Act like a lead who owns the outcome: find out what happened, keep what is useful, try again with a better plan, and stop only when more attempts would not help.
+Paperclip itself respawns a child that stays stalled on an infrastructure fault (a restart that left the original execution unprovable, a session whose retries ran out, a missed finalization deadline). It waits ten minutes after the stall so you can act first, then creates the successor, carries the handoff and wakes the assignee. You do not have to do anything for those.
+
+Use this page when you are woken with `issue_blocker_stalled` and want to do better than a plain retry, or when a child failed, was cancelled or went silent for a reason the system does not respawn on its own. Act like a lead who owns the outcome: find out what happened, keep what is useful, try again with a better plan, and stop only when more attempts would not help.
 
 ## Before you respawn
 

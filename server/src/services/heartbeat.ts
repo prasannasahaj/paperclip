@@ -1046,6 +1046,7 @@ export function heartbeatService(
     settleLostRunProcess: scope => recoverActiveExecutions(scope),
     startSavedWorkRecovery: source => startOverdueWorkspaceRecovery(db, environmentRuntime, resumeRemoteStopComments, source),
     cancelStalledQueuedRun: createStalledQueuedRunCancel({ setRunStatusFromLive, setWakeupStatus, appendRunEvent, releaseIssueExecutionAndPromote }),
+    cancelRun: (runId, reason, options) => cancelRunInternal(runId, reason, options),
     settleExplicitContinuationRetry: releaseIssueExecutionAndPromote,
     scheduleRecoveryRetry: async (runId, outcome) => {
       const [run] = await db
