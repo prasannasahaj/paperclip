@@ -3,6 +3,7 @@ import {
   currentControllerBootId,
   currentControllerDeployment,
   currentControllerProcessStamp,
+  canonicalProcessSpace,
   currentProcessSpaceHash,
   observedProcessStartedAt,
   processExists,
@@ -285,7 +286,7 @@ async function proveLocalProcessGone(stamp: LocalOwnerStamp, probe: ProcessProbe
     return { verdict: "unprovable", reason: "unknown_process_space" };
   }
   if (stamp.host && stamp.host !== probe.host) return { verdict: "unprovable", reason: "different_host" };
-  if (stamp.processSpace !== probe.processSpace) return { verdict: "unprovable", reason: "different_process_space" };
+  if (canonicalProcessSpace(stamp.processSpace) !== probe.processSpace) return { verdict: "unprovable", reason: "different_process_space" };
 
   let processReason: "pid_dead" | "pid_reused";
   if (!probe.pidExists(stamp.pid)) {
