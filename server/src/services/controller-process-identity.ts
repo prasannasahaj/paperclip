@@ -52,38 +52,56 @@ function readDeployment(value: unknown): ControllerDeployment | null {
 const bootId = randomUUID();
 export const UNKNOWN_PROCESS_SPACE = "unknown";
 
+type ProcessSpaceIdentity = { hash: string; legacyAliases: readonly string[] };
+
+const DARWIN_PROCESS_SPACE_KIND = "darwin";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UNKNOWN_IDENTITY: ProcessSpaceIdentity = { hash: UNKNOWN_PROCESS_SPACE, legacyAliases: [] };
+
+function digestProcessSpace(parts: readonly string[]): string {
+  return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+}
+
+function legacyDarwinHostnames(hostName: string): string[] {
+  const label = hostName.split(".")[0] ?? "";
+  return [...new Set([hostName, `${label}.local`, label].filter(name => name.length > 0))];
+}
+
+function readDarwinProcessSpace(): ProcessSpaceIdentity {
+  const bootSession = execFileSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
+    encoding: "utf8", timeout: 1_500, maxBuffer: 4_096, windowsHide: true,
+  }).trim().toLowerCase();
+  if (!UUID_PATTERN.test(bootSession)) return UNKNOWN_IDENTITY;
+  return {
+    hash: digestProcessSpace([DARWIN_PROCESS_SPACE_KIND, bootSession]),
+    legacyAliases: legacyDarwinHostnames(hostname()).map(name => digestProcessSpace([name, bootSession])),
+  };
+}
+
 /**
  * Names the space in which PIDs are comparable: one kernel boot and, on Linux,
  * one PID namespace. Containers that share a hostname but not a PID namespace
  * get different values. When the space cannot be read, no record is judged.
  * A redeploy onto another host or namespace also never matches; such records
- * keep their original deadlines.
+ * keep their original deadlines. macOS has one PID space per boot, and its
+ * hostname follows the network, so the boot session alone names the space;
+ * receipts saved with a hostname in the hash stay accepted as legacy aliases.
  */
-function processSpaceHash(): string {
+function readProcessSpaceIdentity(): ProcessSpaceIdentity {
   try {
-    const parts = [hostname()];
     if (process.platform === "linux") {
-      parts.push(readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(), readlinkSync("/proc/self/ns/pid"));
-    } else if (process.platform === "darwin") {
-      // One bounded, read-only kernel identity observation per module. Rounded
-      // boot-time estimates can collide across hosts and cannot authorize PID
-      // comparisons. Old weak hashes simply stop matching this stronger proof.
-      const bootSession = execFileSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
-        encoding: "utf8", timeout: 1_500, maxBuffer: 4_096, windowsHide: true,
-      }).trim().toLowerCase();
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(bootSession)) return UNKNOWN_PROCESS_SPACE;
-      parts.push(bootSession);
-    } else {
-      return UNKNOWN_PROCESS_SPACE;
+      const parts = [hostname(), readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(), readlinkSync("/proc/self/ns/pid")];
+      return parts.some(part => !part) ? UNKNOWN_IDENTITY : { hash: digestProcessSpace(parts), legacyAliases: [] };
     }
-    if (parts.some(part => !part)) return UNKNOWN_PROCESS_SPACE;
-    return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32);
+    if (process.platform === "darwin") return readDarwinProcessSpace();
+    return UNKNOWN_IDENTITY;
   } catch {
-    return UNKNOWN_PROCESS_SPACE;
+    return UNKNOWN_IDENTITY;
   }
 }
 
-const hostHash = processSpaceHash();
+const processSpaceIdentity = readProcessSpaceIdentity();
+const hostHash = processSpaceIdentity.hash;
 
 /** OS-observed start time of any PID (epoch ms), or null when it cannot be read. */
 export async function observedProcessStartedAt(pid: number): Promise<number | null> {
@@ -206,11 +224,23 @@ export function currentProcessSpaceHash(): string {
   return hostHash;
 }
 
+/** Maps a receipt saved under a legacy hash of this machine to the current
+ * hash; every other value, including "unknown", is returned unchanged. */
+export function canonicalProcessSpace(recorded: string | null | undefined): string | null {
+  if (typeof recorded !== "string") return null;
+  return hostHash !== UNKNOWN_PROCESS_SPACE && processSpaceIdentity.legacyAliases.includes(recorded) ? hostHash : recorded;
+}
+
+/** Every hash a record of this machine's PID space may carry, current first. */
+export function currentProcessSpaceAliases(): readonly string[] {
+  return hostHash === UNKNOWN_PROCESS_SPACE ? [] : [hostHash, ...processSpaceIdentity.legacyAliases];
+}
+
 /**
  * Whether a PID recorded under `recorded` can be judged in this process.
  * True only for the same readable PID space. A different or unreadable space
  * is never proof: a dead PID here says nothing about a process elsewhere.
  */
 export function sameProcessSpace(recorded: string | null | undefined): boolean {
-  return typeof recorded === "string" && hostHash !== UNKNOWN_PROCESS_SPACE && recorded === hostHash;
+  return typeof recorded === "string" && hostHash !== UNKNOWN_PROCESS_SPACE && canonicalProcessSpace(recorded) === hostHash;
 }

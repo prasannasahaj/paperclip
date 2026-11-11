@@ -44,7 +44,7 @@ import { readProcessStartedAt } from "../hot-restart.js";
 import { currentProcessProbe, proveOwnerGone, type ProcessProbe } from "../owner-proof.js";
 import { persistActivity } from "../activity-log.js";
 import { OPERATOR_ATTESTED_CONTROLLER_HOST, requestNativeControllerStopConfirmation } from "./native-controller-host-recovery.js";
-import { currentControllerBootId, currentProcessSpaceHash, currentProcessStartedAtMs, processStartsDefinitelyDiffer } from "../controller-process-identity.js";
+import { canonicalProcessSpace, currentControllerBootId, currentProcessSpaceHash, currentProcessStartedAtMs, processStartsDefinitelyDiffer } from "../controller-process-identity.js";
 import { getServerProcessStartedAt } from "../../server-info.js";
 import { redactSensitiveText } from "../../redaction.js";
 import { isUniqueViolation } from "../../db-errors.js";
@@ -491,7 +491,7 @@ export async function evaluateNativeControllerTakeover(input: {
     const sameProcessSpace = Object.prototype.hasOwnProperty.call(owner, "controllerHostHash")
       && typeof owner.controllerHostHash === "string"
       && owner.controllerHostHash !== UNKNOWN_PROCESS_SPACE
-      && owner.controllerHostHash === currentProcessProbe().processSpace;
+      && canonicalProcessSpace(owner.controllerHostHash) === currentProcessProbe().processSpace;
     if (sameProcessSpace && owner.controllerPid) {
       const local = await evaluateNativeControllerTakeover({ ...input, remoteLeaseFenced: false, requireStoppedController: true });
       if (local.allowed && !local.legacyHostFallback) return { allowed: true, reason: `remote_lease_${local.reason}` };
@@ -535,7 +535,7 @@ export async function evaluateNativeControllerTakeover(input: {
     readStartedAt: input.readProcessStartedAt ?? base.readStartedAt,
   };
   const needsBootProof = input.requireRecordedProcessSpace || (owner.controllerHostHash != null
-    && (owner.controllerHostHash !== probe.processSpace || owner.controllerHostHash === UNKNOWN_PROCESS_SPACE));
+    && (canonicalProcessSpace(owner.controllerHostHash) !== probe.processSpace || owner.controllerHostHash === UNKNOWN_PROCESS_SPACE));
   const proof = await proveOwnerGone({
     kind: "local", scope: "native_controller", generation: null, host: null,
     processSpace: recordsHost ? owner.controllerHostHash ?? null : probe.processSpace,
@@ -1397,7 +1397,7 @@ export async function claimNativeRestartRecoveries(input: {
       const processSpaceUnverified = !durableAuthority
         && Boolean(row.coordinator.leaseOwner && row.coordinator.leaseExpiresAt)
         && !isCurrentNativeControllerProcess(row.coordinator)
-        && (controllerHostHash === "unknown" || row.coordinator.controllerHostHash !== controllerHostHash);
+        && (controllerHostHash === "unknown" || canonicalProcessSpace(row.coordinator.controllerHostHash) !== controllerHostHash);
       const nonExecutionOwner = row.coordinator.leaseOwner?.startsWith("native-finalizer:")
         || row.coordinator.leaseOwner?.startsWith("native-cleanup:");
       // The recorded controller is this exact process (same boot and PID), so

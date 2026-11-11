@@ -214,6 +214,29 @@ describe("failed native run owner release", () => {
     } finally { identity?.mockRestore(); probe.mockRestore(); }
   });
 
+  it("releases an expired failed-run owner whose saved process space is a legacy alias of this machine", async () => {
+    const actual = await controllerProcess.currentControllerProcess();
+    const legacyAlias = `previous-release-hostname-hash:${actual.hostHash}`;
+    const recordedPid = 2_000_000_001;
+    const { runId } = await nativeRun({ status: "failed", errorCode: "adapter_failed",
+      coordinator: { leaseOwner: `previous-release-controller:${randomUUID()}`, leaseExpiresAt: new Date(0),
+        controllerBootId: randomUUID(), controllerPid: recordedPid, controllerHostHash: legacyAlias,
+        recoveryState: "awaiting_evidence" } });
+    const originalKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (Math.abs(pid) === recordedPid && signal === 0) throw Object.assign(new Error("recorded controller is gone"), { code: "ESRCH" });
+      return originalKill(pid, signal);
+    });
+    const canonical = vi.spyOn(controllerProcess, "canonicalProcessSpace")
+      .mockImplementation(recorded => recorded === legacyAlias ? actual.hostHash : recorded ?? null);
+    const aliases = vi.spyOn(controllerProcess, "currentProcessSpaceAliases").mockReturnValue([actual.hostHash, legacyAlias]);
+    try {
+      expect(await releaseAbandonedNativeOwners(db)).toBe(1);
+      expect(await coordinator(runId)).toMatchObject({ phase: "terminal_failure", leaseOwner: null, leaseExpiresAt: null });
+      expect(await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.companyId, companyId))).toEqual([]);
+    } finally { aliases.mockRestore(); canonical.mockRestore(); kill.mockRestore(); }
+  });
+
   it.each(["timed_out", "interrupted"] as const)("publishes quiet operator attention after an already %s owner expires", async status => {
     const { runId, issueId } = await nativeRun({ status, coordinator: { leaseOwner: `foreign:${randomUUID()}`,
       controllerBootId: randomUUID(), controllerHostHash: null, leaseExpiresAt: new Date(0) } });

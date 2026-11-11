@@ -1,4 +1,4 @@
-import { currentProcessSpaceHash } from "../controller-process-identity.js";
+import { canonicalProcessSpace, currentProcessSpaceAliases, currentProcessSpaceHash } from "../controller-process-identity.js";
 import type { ExecutionReconciliation } from "@paperclipai/shared";
 import { nativeControllerAuthorityDigest, readNativeRemoteExecutionOwnership, isNativeRunnerOwnershipHeld } from "./native-runner-ownership.js";
 import { preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
@@ -82,11 +82,11 @@ function abandonedOwnerCondition() {
 /** Local owners retain their release deadline. Foreign owners retain the same
  * original deadline until expiry surfaces attention owned by the board. */
 async function localOwnerSpaceCondition() {
-  const processSpace = currentProcessSpaceHash();
+  const processSpaces = currentProcessSpaceAliases();
   const native = await currentNativeControllerIdentity();
   return or(
     and(eq(nativeRunFinalizations.controllerBootId, native.bootId), eq(nativeRunFinalizations.controllerPid, native.pid)),
-    processSpace !== "unknown" ? eq(nativeRunFinalizations.controllerHostHash, processSpace) : sql`false`,
+    processSpaces.length > 0 ? inArray(nativeRunFinalizations.controllerHostHash, [...processSpaces]) : sql`false`,
   )!;
 }
 
@@ -244,7 +244,7 @@ async function settleFailedRunOwner(db: Db, release: Release, now: Date): Promis
       // same known kernel/PID space before either recorded-process probe.
       if (!isCurrentNativeControllerProcess(coordinator)) {
         const current = currentProcessSpaceHash();
-        if (current === "unknown" || coordinator.controllerHostHash !== current) {
+        if (current === "unknown" || canonicalProcessSpace(coordinator.controllerHostHash) !== current) {
           if (!coordinator.leaseOwner?.startsWith("native-finalizer:") && !coordinator.leaseOwner?.startsWith("native-cleanup:")) {
             const [expiry] = await tx.select({ epoch: sql<string | null>`extract(epoch from ${nativeRunFinalizations.leaseExpiresAt})::numeric::text` })
               .from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, run.id));
