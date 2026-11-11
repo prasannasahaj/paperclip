@@ -126,12 +126,36 @@ describe("buildPlaywrightBrowserLaunch", () => {
     );
   });
 
-  it("forwards only PATH and HOME to the browser process", () => {
+  it("forwards only PATH, HOME and the socket directory to the browser process", () => {
     const { server } = launch(ENABLED);
-    expect(server.env).toEqual([
-      { name: "PATH", value: "/usr/bin" },
-      { name: "HOME", value: "/home/agent" },
-    ]);
+    expect(server.env.map((entry) => entry.name)).toEqual(["PATH", "HOME", "PWTEST_SOCKETS_DIR"]);
+    expect(server.env.find((entry) => entry.name === "PATH")?.value).toBe("/usr/bin");
+    expect(server.env.find((entry) => entry.name === "HOME")?.value).toBe("/home/agent");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the browser socket path short even when the caller's temp directory is long",
+    () => {
+      const longTempDir = `/private/var/folders/${"x".repeat(60)}/T/claude-501-sandbox`;
+      const { server } = buildPlaywrightBrowserLaunch({
+        config: ENABLED,
+        instanceRoot: path.join(root, "instance"),
+        stateDir: path.join(root, "state"),
+        runId: "run-1",
+        env: { PATH: "/usr/bin", HOME: "/home/agent", TMPDIR: longTempDir },
+        nodeBinary: "/usr/local/bin/node",
+        cliPath: "/pkg/playwright-mcp/cli.js",
+      });
+      const socketsDir = server.env.find((entry) => entry.name === "PWTEST_SOCKETS_DIR")?.value;
+      expect(socketsDir).toMatch(/^\/tmp\/pw-[0-9a-f]{8}$/);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("uses one socket directory per instance across runs", () => {
+    const socketsDir = (runId: string) =>
+      launch(ENABLED, runId).server.env.find((entry) => entry.name === "PWTEST_SOCKETS_DIR")?.value;
+    expect(socketsDir("run-a")).toMatch(/^\/tmp\/pw-/);
+    expect(socketsDir("run-a")).toBe(socketsDir("run-b"));
   });
 
   it("resolves the bundled Playwright MCP entrypoint by default", () => {
