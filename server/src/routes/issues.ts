@@ -1,6 +1,7 @@
 import { assertAgentInteraction } from "../services/agent-interaction-policy.js";
 import { assertQueuedCommentInteractionDelivery, recheckQueuedCommentInteractionDelivery } from "../services/agent-interaction-delivery.js";
 import { listStalledDependencies } from "../services/recovery/blocker-stall-wakeups.js";
+import { agentHasChildRecoveryAuthority, buildChildHandoff } from "../services/child-handoff.js";
 import { confirmMcpAttachmentCleanup, recordMcpAttachmentCleanup, type McpAttachmentCleanup } from "../services/public-mcp/upload-cleanup.js";
 import { notifyDeferredExecutionWork } from "../services/deferred-execution-notifications.js";
 import { notifyNativeRecoveryNotices } from "../services/native-recovery-notice-notifications.js";
@@ -10405,6 +10406,30 @@ export function issueRoutes(
       actions: [...(active ? [active] : []), ...retainedHolds
         .filter(action => action.id !== active?.id).map(issueRecoveryActionReadModel)],
     });
+  });
+
+  async function assertChildRecoveryAuthority(
+    req: Request,
+    issue: typeof issueRows.$inferSelect,
+    boardAction: "issue:read" | "issue:mutate",
+  ) {
+    if (req.actor.type === "agent") {
+      const agentId = req.actor.agentId;
+      if (agentId && await agentHasChildRecoveryAuthority(db, { companyId: issue.companyId, agentId, issue })) return;
+      throw forbidden("Only the agent that created this task or the assignee of one of its ancestors can recover it.", {
+        code: "child_recovery_not_authorized", issueId: issue.id, actorAgentId: agentId ?? null,
+      });
+    }
+    assertBoard(req);
+    const decision = await decideIssueAccess(req, issue, boardAction);
+    if (!decision.allowed) throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
+  }
+
+  router.get("/issues/:id/handoff", async (req, res) => {
+    const issue = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Issue not found");
+    if (!issue || !(await assertIssueReadAllowed(req, res, issue))) return;
+    await assertChildRecoveryAuthority(req, issue, "issue:read");
+    res.json(await buildChildHandoff(db, { companyId: issue.companyId, issueId: issue.id }));
   });
 
   router.post("/issues/:id/retry", validate(taskRetrySchema), async (req, res) => {

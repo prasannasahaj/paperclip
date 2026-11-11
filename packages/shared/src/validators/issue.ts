@@ -649,6 +649,52 @@ export const taskRetrySchema = z.object({
   retryAction: z.literal("move_forward").optional(),
 }).strict();
 
+export const childHandoffSchema = z.object({
+  predecessor: z.object({
+    id: z.string().guid(),
+    identifier: z.string().nullable(),
+    title: z.string(),
+    status: z.string(),
+    assigneeAgentId: z.string().guid().nullable(),
+  }),
+  lastRun: z.object({
+    id: z.string().guid(),
+    status: z.string(),
+    errorCode: z.string().nullable(),
+    error: z.string().nullable(),
+    finishedAt: z.date().nullable(),
+  }).nullable(),
+  recoveryAction: z.object({
+    cause: z.string(),
+    reason: z.string().nullable(),
+    nextAction: z.string(),
+  }).nullable(),
+  recentComments: z.array(z.object({
+    id: z.string().guid(),
+    authorLabel: z.string(),
+    body: z.string(),
+    createdAt: z.date(),
+  })),
+  documents: z.array(z.object({
+    key: z.string(),
+    title: z.string().nullable(),
+    updatedAt: z.date(),
+  })),
+  workProducts: z.array(z.object({
+    id: z.string().guid(),
+    kind: z.string(),
+    title: z.string(),
+    url: z.string().nullable(),
+  })),
+  workspace: z.object({
+    branch: z.string().nullable(),
+    headSha: z.string().nullable(),
+    hasUncommittedChanges: z.boolean().nullable(),
+  }),
+  verifyBeforeRepeating: z.array(z.string()),
+});
+export type ChildHandoff = z.infer<typeof childHandoffSchema>;
+
 export const recoverWorkspaceSchema = z.object({
   actionId: z.string().guid(),
   runId: z.string().guid(),

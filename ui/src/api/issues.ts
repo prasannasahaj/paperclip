@@ -5,6 +5,7 @@ import type { ActiveRunForIssue, LiveRunForIssue } from "./heartbeats";
 import type { IssueSummary } from "@paperclipai/shared";
 import type { ExecutionReconciliation } from "@paperclipai/shared";
 import type { IssueContextUsage } from "@paperclipai/shared";
+import type { ChildHandoff } from "@paperclipai/shared";
 import type {
   AcceptedPlanDecompositionSummary,
   AskUserQuestionsAnswer,
@@ -455,6 +456,7 @@ export const issuesApi = {
   reconstructWorkspace: (id: string, data: { actionId: string; runId: string; expectedStatusVersion: number; attachmentIds: string[];
     missingWork: string; actionOutcome: "completed" | "not_performed" | "mixed"; outcomeEvidence: string; acknowledgeLostWork: true }) =>
     api.post<{ runId: string; actionId: string; status: "queued"; replayed: boolean }>(`/issues/${id}/recovery-actions/reconstruct-workspace`, data),
+  childHandoff: (id: string) => api.get<ChildHandoff>(`/issues/${id}/handoff`),
   recoveryActions: (id: string, source?: { runId: string; actionId?: string }) => {
     const query = source ? new URLSearchParams({ inspectSourceRunId: source.runId,
       ...(source.actionId ? { inspectSourceActionId: source.actionId } : {}) }) : null;
