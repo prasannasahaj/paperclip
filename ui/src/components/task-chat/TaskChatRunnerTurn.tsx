@@ -23,6 +23,7 @@ import { TaskChatRunHealthBanner, partitionRunHealthItems } from "./TaskChatRunH
 import { TaskChatProtocolCard } from "./TaskChatProtocolCard";
 import { TaskChatPlanPreviewCard } from "./TaskChatPlanPreviewCard";
 import { TaskChatMarker } from "./TaskChatMarker";
+import { TaskChatRunUsageFooter } from "./TaskChatRunUsageFooter";
 import { TaskChatShimmerScope, useTaskChatShimmer } from "./TaskChatShimmer";
 import {
   buildTurnTimelineRows,
@@ -180,6 +181,7 @@ export function TaskChatRunnerTurn({
   waitSummary = null,
   continuedAfterSteering = false,
   showHeader = true,
+  usageJson,
   onRuntimeRequestDecision,
 }: {
   /** Stable identity used to clear replay-latched final text for the next turn. */
@@ -208,6 +210,8 @@ export function TaskChatRunnerTurn({
   continuedAfterSteering?: boolean;
   /** The task thread keeps a shared header across native and legacy discovery. */
   showHeader?: boolean;
+  /** Settled run usage; the footer renders only once the run is terminal. */
+  usageJson?: Record<string, unknown> | null;
   onRuntimeRequestDecision?: (
     item: TaskChatRuntimeRequestItem,
     decision: TaskChatRuntimeRequestDecision,
@@ -338,6 +342,7 @@ export function TaskChatRunnerTurn({
           />
         </div>
       ) : null}
+      {terminal ? <TaskChatRunUsageFooter usageJson={usageJson} /> : null}
       {!final && currentActivityItems.length === 0 && !(status === "queued" && runId && (waitingLabel || agentQueueWaitFor({ status, execution })))
         ? <RunnerCurrentActivityTail status={status} waitingLabel={waitingLabel} /> : null}
     </div></ToolCallProgressRunProvider></TaskChatShimmerScope>

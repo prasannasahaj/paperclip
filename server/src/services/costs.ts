@@ -313,7 +313,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
       // Run cost-event aggregation and run-duration aggregation in parallel.
       // They're separate queries because cost_events fan out per-event and
       // joining heartbeat_runs through them would double-count run durations.
-      const [costRowResult, runRowResult] = await Promise.all([
+      const [costRowResult, runRowResult, byAgentRows] = await Promise.all([
         db
           .select({
             issueCount: sql<number>`count(distinct ${issues.id})::int`,
@@ -339,6 +339,36 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
             ),
           ),
         db.execute(runSummarySql),
+        db
+          .select({
+            agentId: costEvents.agentId,
+            agentName: agents.name,
+            costCents: displayedCostCents,
+            inputTokens: sumAsNumber(ordinaryInputTokens),
+            cachedInputTokens: sumAsNumber(costEvents.cachedInputTokens),
+            outputTokens: sumAsNumber(costEvents.outputTokens),
+          })
+          .from(issues)
+          .innerJoin(
+            costEvents,
+            and(
+              eq(costEvents.companyId, companyId),
+              eq(costEvents.issueId, issues.id),
+            ),
+          )
+          .leftJoin(agents, eq(agents.id, costEvents.agentId))
+          .where(
+            and(
+              eq(issues.companyId, companyId),
+              visibleIssueCondition(),
+              issueTreeCondition,
+            ),
+          )
+          .groupBy(costEvents.agentId, agents.name)
+          .orderBy(
+            desc(displayedCostCents),
+            desc(sql`sum(${ordinaryInputTokens} + ${costEvents.cachedInputTokens} + ${costEvents.outputTokens})`),
+          ),
       ]);
 
       const costRow = costRowResult[0];
@@ -357,6 +387,14 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         outputTokens: Number(costRow?.outputTokens ?? 0),
         runCount: Number(runRow?.runCount ?? 0),
         runtimeMs: Number(runRow?.runtimeMs ?? 0),
+        byAgent: byAgentRows.map((row) => ({
+          agentId: row.agentId,
+          agentName: row.agentName,
+          costCents: Number(row.costCents ?? 0),
+          inputTokens: Number(row.inputTokens ?? 0),
+          cachedInputTokens: Number(row.cachedInputTokens ?? 0),
+          outputTokens: Number(row.outputTokens ?? 0),
+        })),
       };
     },
 
