@@ -24,6 +24,11 @@ import {
 } from "../../vendor/paperclip-runner/index.js";
 import { runnerPrpCoordinator } from "./runner-prp-coordinator.js";
 import { binaryTargetFromHeader, cachedFileSha256 } from "./off-loop-file-work.js";
+import {
+  RunnerBinaryStaleError,
+  assertRunnerBinaryFresh,
+  checkRunnerBinaryFreshness,
+} from "./runner-binary-freshness.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const RUNNER_VERSION = "paperclip-runner-v1";
@@ -213,14 +218,30 @@ export function resolvePaperclipRunnerBinary(
   for (const candidate of candidates) {
     try {
       accessSync(candidate, constants.R_OK | (process.platform === "win32" ? 0 : constants.X_OK));
-      return candidate;
     } catch {
       // Continue through the fixed production and workspace locations.
+      continue;
     }
+    assertRunnerBinaryFresh(candidate);
+    return candidate;
   }
   throw new Error(
     "paperclip_runner_binary_missing: build @paperclipai/paperclip-runner or set PAPERCLIP_RUNNER_BINARY",
   );
+}
+
+export type RunnerBinaryHealth =
+  | { status: "fresh" | "unverifiable" | "missing" }
+  | { status: "stale"; staleFiles: string[] };
+
+export function inspectRunnerBinaryHealth(): RunnerBinaryHealth {
+  try {
+    const freshness = checkRunnerBinaryFreshness(resolvePaperclipRunnerBinary());
+    return freshness.status === "stale" ? freshness : { status: freshness.status };
+  } catch (error) {
+    if (error instanceof RunnerBinaryStaleError) return { status: "stale", staleFiles: error.staleFiles };
+    return { status: "missing" };
+  }
 }
 
 /** `resolvePaperclipRunnerBinary` without blocking the event loop (run paths). */
@@ -249,10 +270,12 @@ export async function resolvePaperclipRunnerBinaryAsync(
   for (const candidate of candidates) {
     try {
       await access(candidate, constants.R_OK | (process.platform === "win32" ? 0 : constants.X_OK));
-      return candidate;
     } catch {
       // Continue through the fixed production and workspace locations.
+      continue;
     }
+    assertRunnerBinaryFresh(candidate);
+    return candidate;
   }
   throw new Error(
     "paperclip_runner_binary_missing: build @paperclipai/paperclip-runner or set PAPERCLIP_RUNNER_BINARY",

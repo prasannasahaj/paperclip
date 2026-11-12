@@ -38,6 +38,7 @@ import {
 import { serverVersion } from "../version.js";
 import { getStartupRecoveryState } from "../startup-recovery-state.js";
 import { nativeRestartRecoverySummary } from "../services/native-runtime/native-restart-recovery.js";
+import { inspectRunnerBinaryHealth } from "../services/native-runtime/native-codex-runner.js";
 import {
   removeHotRestartIntent,
   writeHotRestartIntent,
@@ -406,6 +407,8 @@ export function healthRoutes(
         })
       : undefined;
 
+    const runnerBinary = exposeFullDetails ? inspectRunnerBinaryHealth() : undefined;
+
     if (!exposeFullDetails) {
       const redactedDatabaseBackup = databaseBackup ? redactedDatabaseBackupHealth(databaseBackup) : undefined;
       const redactedWarnings = redactedDatabaseBackup?.warnings.length ? redactedDatabaseBackup.warnings : undefined;
@@ -447,6 +450,7 @@ export function healthRoutes(
       serverInfo,
       startupRecovery,
       nativeRecovery,
+      runnerBinary,
       ...(databaseBackup ? { databaseBackup } : {}),
       ...(warnings ? { warnings } : {}),
       ...(devServer ? { devServer } : {}),
