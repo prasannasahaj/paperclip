@@ -682,6 +682,44 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     },
   );
 
+  it("delivers a saved human answer to a parent parked in review behind open blockers", async () => {
+    const companyId = randomUUID(), agentId = randomUUID(), blockerId = randomUUID(), issueId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "In review fixture",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false, defaultResponsibleUserId: "responsible-user" });
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user",
+      status: "active", membershipRole: "member" });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Parent assignee", role: "engineer", status: "active",
+      adapterType: "codex_local", adapterConfig: {}, runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } }, permissions: {} });
+    await db.insert(issues).values([
+      { id: blockerId, companyId, title: "Open child task", status: "in_progress", responsibleUserId: "responsible-user" },
+      { id: issueId, companyId, title: "Parent waiting on the answer", status: "in_review", assigneeAgentId: agentId,
+        responsibleUserId: "responsible-user" },
+    ]);
+    await db.insert(issueRelations).values({ companyId, issueId: blockerId, relatedIssueId: issueId, type: "blocks" });
+    const [interaction] = await db.insert(issueThreadInteractions).values({ companyId, issueId, createdByAgentId: agentId,
+      kind: "ask_user_questions", status: "answered", title: "Tactic numbers",
+      resolvedByUserId: "responsible-user", resolvedAt: new Date(),
+      payload: { version: 1, questions: [{ id: "numbers", prompt: "Keep the numbers?", selectionMode: "single",
+        options: [{ id: "keep", label: "Keep them" }] }] },
+      result: { version: 1, answers: [{ questionId: "numbers", optionIds: ["keep"] }] },
+    }).returning();
+    const context = { issueId, mutation: "interaction", interactionId: interaction.id,
+      interactionKind: interaction.kind, interactionStatus: "answered", wakeReason: "issue_commented" };
+
+    const wake = await heartbeat.wakeup(agentId, { source: "automation", triggerDetail: "system", reason: "issue_commented",
+      payload: context, contextSnapshot: context, requestedByActorType: "user", requestedByActorId: "responsible-user" });
+    expect(wake).not.toBeNull();
+    await heartbeat.drainActiveRunExecutions();
+
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, wake!.id));
+    expect({ status: run.status, error: run.error, errorCode: run.errorCode })
+      .toEqual({ status: "succeeded", error: null, errorCode: null });
+    expect(run.contextSnapshot).toMatchObject({ dependencyBlockedInteraction: true, unresolvedBlockerIssueIds: [blockerId] });
+    expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].status).toBe("in_review");
+  });
+
   it("keeps blocked descendants idle until their blockers resolve", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();

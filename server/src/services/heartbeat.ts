@@ -2336,7 +2336,7 @@ export function heartbeatService(
             .listDependencyReadiness(agent.companyId, [issueId])
             .then((rows) => rows.get(issueId) ?? null))
         : null;
-      const dependencyResponse = issueId && issueContext?.status === "blocked"
+      const dependencyResponse = issueId && (issueContext?.status === "blocked" || issueContext?.status === "in_review")
         && context.dependencyBlockedInteraction === true
         && await isVerifiedDependencyInteractionResponse(db, { companyId: agent.companyId,
           issueId, agentId: agent.id, context });

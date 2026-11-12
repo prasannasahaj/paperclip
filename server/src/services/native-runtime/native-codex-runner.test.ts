@@ -9,9 +9,12 @@ import {
   buildNativeRunnerArguments,
   buildNativeRunnerPreparePayload,
   resolvePaperclipRunnerBinary,
+  resolvePaperclipRunnerBinaryAsync,
   assertPaperclipRunnerBinaryConfiguration,
   resolveRemotePaperclipRunnerBinary,
 } from "./native-codex-runner.js";
+import * as runnerBinaryFreshness from "./runner-binary-freshness.js";
+import { RUNNER_BINARY_STALE_CODE } from "./runner-binary-freshness.js";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -25,6 +28,28 @@ describe("installed runner selection", () => {
       expect(resolvePaperclipRunnerBinary("")).toBe(binary);
       expect(select).toHaveBeenCalledOnce();
       expect(resolvePaperclipRunnerBinary(join(root, "missing"))).toBe(binary);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a default runner binary that no longer matches the checkout, but never an explicit override", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-runner-selection-"));
+    const defaultBinary = join(root, "default-runnerd");
+    const overrideBinary = join(root, "configured-runnerd");
+    try {
+      await writeFile(defaultBinary, "test executable", { mode: 0o700 });
+      await writeFile(overrideBinary, "test executable", { mode: 0o700 });
+      vi.spyOn(runner, "defaultCapabilityRunnerdBinary").mockReturnValue(defaultBinary);
+      vi.spyOn(runner, "defaultCapabilityRunnerdBinaryAsync").mockResolvedValue(defaultBinary);
+      const staleness = vi.spyOn(runnerBinaryFreshness, "assertRunnerBinaryFresh").mockImplementation(() => {
+        throw new Error(`${RUNNER_BINARY_STALE_CODE}: provider-event.schema.json changed`);
+      });
+
+      expect(() => resolvePaperclipRunnerBinary("")).toThrow(RUNNER_BINARY_STALE_CODE);
+      await expect(resolvePaperclipRunnerBinaryAsync("")).rejects.toThrow(RUNNER_BINARY_STALE_CODE);
+      expect(resolvePaperclipRunnerBinary(overrideBinary)).toBe(overrideBinary);
+      expect(staleness).toHaveBeenCalledTimes(2);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
