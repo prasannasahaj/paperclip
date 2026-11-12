@@ -51,7 +51,12 @@ To run only the UI against QA backends, `.env.local` must set `VITE_USE_PROXY='t
 
 ## Step 3 — Use the Playwright browser
 
-Your tools include the `browser_*` tools of the `Playwright browser` MCP server (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot` and others). Paperclip starts that browser with your run: a fresh, isolated, headless Chrome that has the saved QA login restored. Nothing is left running after the run ends, and no other agent shares it.
+Your tools include the `browser_*` tools of the `Playwright browser` MCP server (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot` and others). Paperclip connects that browser to your run in one of two ways, set on the agent:
+
+- **Isolated (default):** a fresh, headless Chrome with the saved QA login restored. Nothing is left running after the run ends, and no other agent shares it.
+- **Attached (`browser.cdpEndpoint`):** the long-lived QA Chrome the human started. It keeps its own login and tabs, and other runs may share it. Open your own tab for the work and leave the others alone.
+
+The first line of the run log says which one you have.
 
 Work one action at a time and read each result before choosing the next:
 
@@ -59,7 +64,7 @@ Work one action at a time and read each result before choosing the next:
 - `browser_take_screenshot` saves an image file as evidence. Images are not shown to you unless the agent has `browser.images` enabled, so judge from the snapshot and keep the file as proof.
 - Watch `browser_console_messages` and `browser_network_requests` after each action that touches the change.
 
-If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port, and do not write Playwright scripts.
+If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port yourself (Paperclip does that when the agent has `browser.cdpEndpoint`), and do not write Playwright scripts.
 
 ## Step 4 — Starting state, and when you need the human
 
@@ -75,7 +80,7 @@ Never write to the database directly and never touch production: the QA database
 
 Ask instead of guessing when:
 
-- the page shows a login wall: the saved login is missing or expired
+- the page shows a login wall: the saved login is missing or expired, or the QA Chrome has been signed out
 - the flow needs data you cannot create or reuse, for example campaigns, strategies and tactics in Atlas
 - the correct URL is not in the issue and not the default
 
@@ -83,11 +88,15 @@ Create one `ask_user_questions` interaction with `answerMode: "text"`, `resolver
 
 > Sign in once so I can reuse the login: run `node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000` from the repo root, sign in in the window it opens, press Enter in the terminal, then reply "signed in".
 
+When you are attached to the QA Chrome, the human signs in in that window instead, and you continue in the same browser without a saved login file:
+
+> The QA Chrome is on a login page. Sign in in that window, leave it open, then reply "signed in".
+
 > Create a campaign with at least one strategy and two tactics, then reply with the URL of the campaign page.
 
 Then follow the waiting posture in the `paperclip` skill: confirm the interaction is saved and pending, set the issue to `in_review`, and exit. You are woken with the answer; resume at Step 5 with the URL they gave.
 
-Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later run starts signed in.
+Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later isolated run starts signed in. An attached run keeps the login in the QA Chrome profile instead.
 
 ## Step 5 — Explore and judge
 
