@@ -7,6 +7,7 @@ import request from "supertest";
 import type { Db } from "@paperclipai/db";
 import { healthRoutes } from "../routes/health.js";
 import * as devServerStatus from "../dev-server-status.js";
+import * as nativeCodexRunner from "../services/native-runtime/native-codex-runner.js";
 import { serverVersion } from "../version.js";
 
 const mockReadPersistedDevServerStatus = vi.hoisted(() => vi.fn());
@@ -232,6 +233,21 @@ describe("GET /health", () => {
     });
     // With no git metadata baked in, the exposed commit is null (not omitted).
     expect(res.body.commit).toBeNull();
+  });
+
+  it("reports a stale runner binary with the contract files it is missing in full health details", async () => {
+    vi.spyOn(nativeCodexRunner, "inspectRunnerBinaryHealth").mockReturnValue({
+      status: "stale",
+      staleFiles: ["protocol/schemas/provider-event.schema.json"],
+    });
+
+    const res = await request(createApp(createHealthyDb())).get("/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body.runnerBinary).toEqual({
+      status: "stale",
+      staleFiles: ["protocol/schemas/provider-event.schema.json"],
+    });
   });
 
   it("surfaces a stale database backup warning in full health details", async () => {
