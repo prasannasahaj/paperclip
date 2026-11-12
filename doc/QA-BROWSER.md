@@ -22,6 +22,7 @@ QA agents verify finished work in a real browser through a Playwright MCP server
 | `headed` | `false` | Show the browser window. Use it to watch a run on your own machine. |
 | `images` | `false` | Send screenshots to the model. Off keeps tokens low; the page is read as a text snapshot. |
 | `storageStatePath` | `<instance root>/qa-browser/storage-state.json` | Saved login to restore. |
+| `cdpEndpoint` | none | Attach to a browser you already run instead of starting an in-memory one. See [Attach to a long-lived QA Chrome](#attach-to-a-long-lived-qa-chrome). |
 | `allowedOrigins` | none | Origins the browser may request. Not a security boundary: redirects are not covered. |
 
 Remove the legacy `chrome: true` setting from the agent; the QA Verifier's ACP runs exposed no Chrome tools with it (run `f5f80d24`).
@@ -33,6 +34,25 @@ node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000
 ```
 
 Sign in in the window that opens, then press Enter in the terminal. The file is written with mode `0600`. It holds session cookies and local storage for the QA account, so keep only QA logins in it. Run it again when the Auth0 session expires.
+
+## Attach to a long-lived QA Chrome
+
+Use this when you need to sign in during a run, or when the in-memory browser's saved login keeps expiring. Start one Chrome with its own profile and let the agent attach to it:
+
+```sh
+open -na "Google Chrome" --args --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 --user-data-dir=$HOME/.paperclip/qa-chrome
+```
+
+```json
+{ "browser": { "enabled": true, "cdpEndpoint": "http://127.0.0.1:9333" } }
+```
+
+- Sign in once in that window. The profile persists, so you repeat it only when the Auth0 session expires.
+- With `cdpEndpoint` set, the run no longer uses `--isolated`, `--headless` or `storageStatePath`. `headed` has no effect: the browser is whatever you started.
+- Parallel runs share this one browser and its tabs.
+- Use `127.0.0.1` rather than `localhost` in the endpoint, and pick a port nothing else holds. On a host where your everyday Chrome already listens on `127.0.0.1:9222`, a QA Chrome on 9222 binds only IPv6 and `localhost` can resolve to the wrong browser.
+- Keep the debugging port bound to localhost and keep only QA logins in the profile. Anything that can reach the port controls the browser.
+- If nothing is listening on the endpoint, the browser tools fail at the first call.
 
 ## Handoff and test data
 
