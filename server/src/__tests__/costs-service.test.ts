@@ -83,6 +83,7 @@ const mockCostService = vi.hoisted(() => ({
     outputTokens: 0,
     runCount: 0,
     runtimeMs: 0,
+    byAgent: [],
   }),
   windowSpend: vi.fn().mockResolvedValue([]),
   byProject: vi.fn().mockResolvedValue([]),
@@ -280,6 +281,7 @@ describe("cost routes", () => {
       outputTokens: 0,
       runCount: 0,
       runtimeMs: 0,
+      byAgent: [],
     });
   });
 
@@ -564,6 +566,44 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     expect((await costs.summary(companyId)).spendCents).toBe(0);
   });
 
+  it("splits an issue tree's usage by agent, largest token user first, including unpriced subscription usage", async () => {
+    const companyId = randomUUID();
+    const builderId = randomUUID();
+    const reviewerId = randomUUID();
+    const parentIssueId = randomUUID();
+    const childIssueId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    for (const [id, name] of [[builderId, "Builder"], [reviewerId, "Reviewer"]] as const) {
+      await db.insert(agents).values({
+        id, companyId, name, role: "engineer", status: "active", adapterType: "claude_local",
+        adapterConfig: {}, runtimeConfig: {}, permissions: {},
+      });
+    }
+    await db.insert(issues).values({ id: parentIssueId, companyId, title: "Parent", status: "todo" });
+    await db.insert(issues).values({ id: childIssueId, companyId, parentId: parentIssueId, title: "Child", status: "todo" });
+    const baseEvent = { provider: "anthropic", biller: "anthropic", billingType: "subscription_included" as const,
+      model: "sonnet", costCents: 0, occurredAt: new Date() };
+    await costs.createEvent(companyId, { ...baseEvent, agentId: builderId, issueId: parentIssueId,
+      inputTokens: 1_000, cachedInputTokens: 4_000, outputTokens: 500 });
+    await costs.createEvent(companyId, { ...baseEvent, agentId: builderId, issueId: childIssueId,
+      inputTokens: 2_000, cachedInputTokens: 0, outputTokens: 500 });
+    await costs.createEvent(companyId, { ...baseEvent, agentId: reviewerId, issueId: parentIssueId,
+      inputTokens: 100, cachedInputTokens: 0, outputTokens: 50 });
+
+    const summary = await costs.issueTreeSummary(companyId, parentIssueId);
+
+    expect(summary.byAgent.map((row) => row.agentName)).toEqual(["Builder", "Reviewer"]);
+    expect(summary.byAgent[0]).toMatchObject({ agentId: builderId,
+      inputTokens: 3_000, cachedInputTokens: 4_000, outputTokens: 1_000 });
+    expect(summary.byAgent[1]).toMatchObject({ agentId: reviewerId, inputTokens: 100, outputTokens: 50 });
+    expect(summary.byAgent[0].costCents).toBeGreaterThan(summary.byAgent[1].costCents);
+  });
+
   it("aggregates cost event sums above int32 without raising Postgres integer overflow", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
@@ -797,6 +837,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       outputTokens: 12,
       runCount: 0,
       runtimeMs: 0,
+      byAgent: expect.any(Array),
     });
   });
 

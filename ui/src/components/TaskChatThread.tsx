@@ -3508,6 +3508,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                                     <TaskChatRunnerTurn
                                       showHeader={false}
                                       runId={tailRunId}
+                                      usageJson={tailRunId ? linkedRunMetaById.get(tailRunId)?.usageJson : null}
                                       execution={
                                         liveRun?.id === tailRunId
                                           ? liveRun.execution

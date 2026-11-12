@@ -120,6 +120,7 @@ import {
 import { PropertyPicker } from "./property-picker";
 import { PropertyChip, PropertyRow, PropertySection } from "./primitives";
 import { IssueContextUsageRow } from "./context-usage-row";
+import { IssueUsageRow } from "./usage-row";
 import {
   buildWorkspaceSelectionUpdate,
   currentWorkspaceSelection,
@@ -2774,6 +2775,7 @@ export function IssueProperties({
         {contextUsage !== undefined
           ? contextUsage ? <PropertyRow label="Context">{contextUsage}</PropertyRow> : null
           : <IssueContextUsageRow issueId={issue.id} assigneeAgentId={issue.assigneeAgentId ?? null} issueStatus={issue.status} hasActiveRun={hasActiveRun} />}
+        <IssueUsageRow issueId={issue.id} hasActiveRun={hasActiveRun} />
       </PropertySection>
 
       {workspacePickerEligible || hasWorkspaceRuntimeControls || issue.currentExecutionWorkspace?.branchName || issue.currentExecutionWorkspace?.cwd || issue.executionWorkspaceId ? (

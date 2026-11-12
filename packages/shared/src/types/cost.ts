@@ -83,6 +83,17 @@ export interface IssueCostSummary {
   /** sum of wall-clock duration of each run in the tree (ms);
    * still-running runs contribute (now - startedAt) so this ticks up live */
   runtimeMs: number;
+  /** Usage in the issue tree split by agent, largest spender first. */
+  byAgent: IssueCostSummaryAgent[];
+}
+
+export interface IssueCostSummaryAgent {
+  agentId: string | null;
+  agentName: string | null;
+  costCents: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
 }
 
 export interface CostByUser {
