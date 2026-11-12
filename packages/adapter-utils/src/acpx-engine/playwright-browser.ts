@@ -12,6 +12,7 @@ export interface PlaywrightBrowserConfig {
   headed: boolean;
   images: boolean;
   storageStatePath: string | null;
+  cdpEndpoint: string | null;
   allowedOrigins: string[];
 }
 
@@ -27,6 +28,7 @@ export interface PlaywrightBrowserLaunch {
   outputDir: string;
   storageStatePath: string;
   loginRestored: boolean;
+  cdpEndpoint: string | null;
 }
 
 function shortSocketsDir(instanceRoot: string): string | null {
@@ -44,6 +46,9 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
   const storageStatePath = typeof browser.storageStatePath === "string" && browser.storageStatePath.trim()
     ? browser.storageStatePath.trim()
     : null;
+  const cdpEndpoint = typeof browser.cdpEndpoint === "string" && browser.cdpEndpoint.trim()
+    ? browser.cdpEndpoint.trim()
+    : null;
   const allowedOrigins = Array.isArray(browser.allowedOrigins)
     ? browser.allowedOrigins.filter((origin): origin is string => typeof origin === "string" && origin.length > 0)
     : [];
@@ -52,6 +57,7 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
     headed: browser.headed === true,
     images: browser.images === true,
     storageStatePath,
+    cdpEndpoint,
     allowedOrigins,
   };
 }
@@ -72,13 +78,13 @@ export function buildPlaywrightBrowserLaunch(input: {
 }): PlaywrightBrowserLaunch {
   const { config } = input;
   const storageStatePath = config.storageStatePath ?? defaultPlaywrightStorageStatePath(input.instanceRoot);
-  const loginRestored = fs.existsSync(storageStatePath);
+  const attachesToRunningBrowser = config.cdpEndpoint !== null;
+  const loginRestored = !attachesToRunningBrowser && fs.existsSync(storageStatePath);
   const outputDir = path.join(input.stateDir, "runs", input.runId, "browser");
   fs.mkdirSync(outputDir, { recursive: true });
 
   const args = [
     input.cliPath ?? resolvePlaywrightMcpCli(),
-    "--isolated",
     "--output-dir",
     outputDir,
     "--output-max-size",
@@ -88,7 +94,12 @@ export function buildPlaywrightBrowserLaunch(input: {
     "--image-responses",
     config.images ? "allow" : "omit",
   ];
-  if (!config.headed) args.push("--headless");
+  if (config.cdpEndpoint) {
+    args.push("--cdp-endpoint", config.cdpEndpoint);
+  } else {
+    args.push("--isolated");
+    if (!config.headed) args.push("--headless");
+  }
   if (loginRestored) args.push("--storage-state", storageStatePath);
   if (config.allowedOrigins.length > 0) args.push("--allowed-origins", config.allowedOrigins.join(";"));
 
@@ -110,5 +121,6 @@ export function buildPlaywrightBrowserLaunch(input: {
     outputDir,
     storageStatePath,
     loginRestored,
+    cdpEndpoint: config.cdpEndpoint,
   };
 }
