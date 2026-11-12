@@ -64,6 +64,7 @@ export interface IssueChatLinkedRun {
   error?: string | null;
   scheduledRetryAt?: string | null;
   nextAction?: string | null;
+  usageJson?: Record<string, unknown> | null;
   resultJson?: Record<string, unknown> | null;
 }
 
