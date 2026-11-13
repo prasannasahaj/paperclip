@@ -29,6 +29,7 @@ let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
 let db: ReturnType<typeof createDb>;
 let home: string;
 const backgroundFeature = defineDecisionFeature("test.background", { background: true });
+const localOllamaRouting = { kind: "local" as const, protocol: "chat" as const, baseUrl: "http://localhost:11434/v1", auth: "none" as const, models: [] };
 const outcome: DecisionProviderOutcome = { answers: { billing: { type: "boolean", probability: 0.9 } }, receipt: decisionReceipt("openai", { usage: { inputTokens: 100, outputTokens: 0 } }) };
 beforeAll(async () => {
   home = await realpath(await mkdtemp(path.join(os.tmpdir(), "paperclip-decisions-")));
@@ -574,6 +575,29 @@ describe("company decision service", () => {
     await db.update(budgetPolicies).set({ amount: 5 }).where(eq(budgetPolicies.id, policy.id));
     expect((await f.service.decide(context, DECISION_TEST_REQUEST)).status).toBe("succeeded");
     expect((await db.select().from(budgetReservations).where(eq(budgetReservations.companyId, f.companyId)))[0]).toMatchObject({ agentId: f.agentId, projectId, amountCents: "2.0000000", state: "settled" });
+  });
+  it("runs a decision on a credentialless local connection", async () => {
+    const f = await fixture();
+    const local = await f.connections.save(f.companyId, "alice", { provider: "openai", method: "api_key", name: "Local D3", ownership: "shared",
+      routing: localOllamaRouting, agentIds: [], allAgents: true }, "");
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.id, local.grantId));
+    expect(grant.credentialSecretRefs).toEqual([]);
+    await f.service.configure(f.companyId, "alice", { ...local, enabled: true, allowBackground: true });
+    f.provider.mockResolvedValue({ answers: outcome.answers, receipt: decisionReceipt("ollama", { usage: { inputTokens: 100, outputTokens: 0 } }) });
+    expect(await f.service.decide(f.context, DECISION_TEST_REQUEST)).toMatchObject({ status: "succeeded", answers: outcome.answers,
+      usage: { costStatus: "reported", costCents: "0.0000000" } });
+    expect(f.provider).toHaveBeenCalledOnce();
+    expect(f.provider.mock.calls[0][0]).toMatchObject({ provider: "ollama", model: "d3:9b", baseUrl: "http://localhost:11434/v1" });
+    expect((await f.service.history(f.companyId, f.context.actor as Parameters<typeof f.service.history>[1]))[0]).toMatchObject({ provider: "ollama", model: "d3:9b", status: "succeeded" });
+    const [event] = await db.select().from(costEvents).where(eq(costEvents.companyId, f.companyId));
+    expect(event).toMatchObject({ usageKind: "decision", provider: "ollama", biller: "ollama", billingType: "fixed", costStatus: "reported", costCents: 0 });
+  });
+  it("keeps a connection without a secret unavailable unless its route needs no credential", async () => {
+    const f = await fixture();
+    await db.update(connectionGrants).set({ credentialSecretRefs: [] }).where(eq(connectionGrants.id, f.binding.grantId));
+    expect(await f.service.decide(f.context, DECISION_TEST_REQUEST)).toMatchObject({ status: "unavailable", reason: "connection_unavailable" });
+    expect(f.provider).not.toHaveBeenCalled();
+    expect(await db.select().from(decisionInvocations).where(eq(decisionInvocations.companyId, f.companyId))).toHaveLength(0);
   });
   it("releases reservations when the provider rejects a request before model work", async () => {
     const f = await fixture();

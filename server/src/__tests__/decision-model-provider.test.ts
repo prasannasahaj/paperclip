@@ -69,4 +69,12 @@ describe("decision provider contract", () => {
     expect(decisionProviderForConnection({ provider: "anthropic", method: "api_key" })).toBeNull();
     expect(decisionProviderForConnection({ provider: "openrouter", method: "api_key", routing: { kind: "openrouter" } })).toBe("openrouter");
   });
+  it("maps keyless local OpenAI-compatible routing to the Ollama provider only", () => {
+    const localOllama = { kind: "local", baseUrl: "http://localhost:11434/v1" };
+    expect(decisionProviderForConnection({ provider: "openai", method: "api_key", routing: { ...localOllama, auth: "none" } })).toBe("ollama");
+    expect(decisionProviderForConnection({ provider: "openai", method: "api_key", routing: { ...localOllama, auth: "bearer" } })).toBeNull();
+    expect(decisionProviderForConnection({ provider: "openai", method: "api_key", routing: { kind: "gateway", baseUrl: "https://example.com", auth: "none" } })).toBeNull();
+    expect(decisionProviderForConnection({ provider: "anthropic", method: "api_key", routing: { kind: "local", auth: "none" } })).toBeNull();
+    expect(DECISION_MODELS.ollama).toEqual({ id: "d3:9b", name: "D3 9B" });
+  });
 });
