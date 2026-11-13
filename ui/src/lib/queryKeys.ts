@@ -410,6 +410,10 @@ export const queryKeys = {
       options.excludeRoot
         ? (["issues", "cost-summary", issueId, "exclude-root"] as const)
         : (["issues", "cost-summary", issueId] as const),
+    maturityScorecard: (issueId: string, options: { excludeRoot?: boolean } = {}) =>
+      options.excludeRoot
+        ? (["issues", "maturity-scorecard", issueId, "exclude-root"] as const)
+        : (["issues", "maturity-scorecard", issueId] as const),
     privacyConstraints: (issueId: string) => ["issues", "privacy-constraints", issueId] as const,
     accessGrants: (issueId: string) => ["issues", "access-grants", issueId] as const,
     attachments: (issueId: string) => ["issues", "attachments", issueId] as const,

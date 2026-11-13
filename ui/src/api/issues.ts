@@ -26,6 +26,7 @@ import type {
   IssueChanges,
   IssueAttachment,
   IssueCostSummary,
+  IssueMaturityScorecard,
   IssueComment,
   IssueRecentComments,
   IssueQueuedCommentQueue,
@@ -698,6 +699,10 @@ export const issuesApi = {
   getCostSummary: (id: string, options: { excludeRoot?: boolean } = {}) => {
     const qs = options.excludeRoot ? "?excludeRoot=true" : "";
     return api.get<IssueCostSummary>(`/issues/${id}/cost-summary${qs}`);
+  },
+  getMaturityScorecard: (id: string, options: { excludeRoot?: boolean } = {}) => {
+    const qs = options.excludeRoot ? "?excludeRoot=true" : "";
+    return api.get<IssueMaturityScorecard>(`/issues/${id}/maturity-scorecard${qs}`);
   },
   listFeedbackTraces: (
     id: string,
