@@ -6,6 +6,7 @@ import { adapterExecutionTargetEnablesSandboxDuplexBridge } from "@paperclipai/a
 import { parseObject } from "../../adapters/utils.js";
 import { logger } from "../../middleware/logger.js";
 import { AgentDirectoryReuseInvalidatedError, isAgentDirectoryCopy } from "../agent-directory-working-copies.js";
+import { formatLearningsIndexGuidance, readLearningsIndex, type LearningsIndex } from "../agent-learnings-index.js";
 import { collectStoppedInstructionCopyWithRetries, instructionWorkingCopyGuidance, type agentInstructionWorkingCopyService } from "../agent-instruction-working-copies.js";
 import { claimWarmNativeInstructionCopy, nativeSessionWorkspaceScope, reserveWarmNativeInstructionDirectory } from "../native-runtime/index.js";
 import { parseNativeExecutionInput } from "../../vendor/paperclip-runner/index.js";
@@ -21,6 +22,16 @@ type AppendRunEvent = ReturnType<typeof createHeartbeatLifecycle>["appendRunEven
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+export function composeInstructionGuidance(
+  copy: Parameters<typeof instructionWorkingCopyGuidance>[0],
+  learningsIndex: LearningsIndex | null,
+  today: Date,
+): string {
+  const directoryGuidance = instructionWorkingCopyGuidance(copy);
+  if (!isAgentDirectoryCopy(copy) || !learningsIndex) return directoryGuidance;
+  return [directoryGuidance, formatLearningsIndexGuidance(learningsIndex, today)].join("\n\n");
 }
 
 /** A failed cleanup is deferred once per run; it cannot replace the run result. */
@@ -218,7 +229,8 @@ export function createHeartbeatInstructionWorkingCopy(input: InstructionWorkingC
             agentHomeForPermissions: workspace.agentHome,
           };
         }
-        const guidance = instructionWorkingCopyGuidance(instructionCopy);
+        const learningsIndex = isAgentDirectoryCopy(instructionCopy) ? await readLearningsIndex(instructionCopy.localRoot) : null;
+        const guidance = composeInstructionGuidance(instructionCopy, learningsIndex, new Date());
         for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
           context[key] = [readNonEmptyString(context[key]), guidance].filter(Boolean).join("\n\n");
         }

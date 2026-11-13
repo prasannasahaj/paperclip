@@ -138,6 +138,28 @@ Other providers use full-directory collection after verified retirement. A
 successful warm ACP turn can retain its unchanged copy with the still-running
 provider; restart recovery preserves files until retirement is proven.
 
+### Learnings
+
+An agent keeps what it has learned in its own files, inside the agent
+directory:
+
+```
+learnings/
+  INDEX.md                one line per learning, opaque text to the server
+  <learning>.md           the detail behind an index line
+playbooks/
+  <playbook>.md           procedures the agent has refined
+```
+
+The server injects `learnings/INDEX.md` into each run's prompt guidance, after
+the agent directory guidance, for every run that restores an agent directory.
+Only the index is injected; the agent opens the linked files when it needs the
+detail. The server reads at most 4096 bytes, cutting at the last whole line and
+noting the truncation in the guidance. It never parses the index, so its format
+belongs to the agent. A missing, empty, non-UTF-8 or symlinked index, or one
+resolving outside the agent directory, adds nothing. Legacy instruction copies
+get no learnings guidance.
+
 ## Run lifecycle
 
 1. Under the agent lock, restore current files into a private run copy and save
