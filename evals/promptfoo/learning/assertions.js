@@ -1,5 +1,43 @@
+import { posix } from "node:path";
+
 const FENCE_PATTERN = /^```[a-z]*\s*\n([\s\S]*?)\n```\s*$/i;
+const KNOWN_OPS = ["read", "write", "update", "move"];
 const RETIRED_ENTRY_SLUG = "run-full-suite-before-review";
+const CAPTURE_EVIDENCE_LINK = "/PAP/issues/PAP-601#comment-c-8841";
+const CONTRADICTING_EVIDENCE_LINK = "/PAP/issues/PAP-640#comment-c-9177";
+const REASON_PATTERN = /reason|because|no longer holds|superseded/i;
+
+function normalizePath(value) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return { reason: "path must be a non-empty string" };
+  }
+  if (posix.isAbsolute(value) || value.split("/").includes("..")) {
+    return { reason: `path escapes the agent directory: ${value}` };
+  }
+  return { path: posix.normalize(value) };
+}
+
+function normalizeOperation(operation) {
+  if (!operation || typeof operation !== "object" || typeof operation.op !== "string") {
+    return { reason: "every operation must be an object with an op string" };
+  }
+  if (!KNOWN_OPS.includes(operation.op)) {
+    return { reason: `unknown op: ${operation.op}` };
+  }
+  const target = normalizePath(operation.path);
+  if (target.reason) {
+    return { reason: `${operation.op}: ${target.reason}` };
+  }
+  const normalized = { ...operation, path: target.path };
+  if (operation.op === "move") {
+    const source = normalizePath(operation.from);
+    if (source.reason) {
+      return { reason: `move needs a valid from: ${source.reason}` };
+    }
+    normalized.from = source.path;
+  }
+  return { operation: normalized };
+}
 
 function parseOperations(output) {
   const trimmed = String(output).trim();
@@ -13,13 +51,15 @@ function parseOperations(output) {
   if (!Array.isArray(parsed)) {
     return { reason: "output is not a JSON array" };
   }
-  const wellFormed = parsed.every(
-    (operation) => operation && typeof operation === "object" && typeof operation.op === "string",
-  );
-  if (!wellFormed) {
-    return { reason: "every operation must be an object with an op string" };
+  const operations = [];
+  for (const operation of parsed) {
+    const normalized = normalizeOperation(operation);
+    if (normalized.reason) {
+      return { reason: normalized.reason };
+    }
+    operations.push(normalized.operation);
   }
-  return { operations: parsed };
+  return { operations };
 }
 
 function check(output, predicate) {
@@ -32,21 +72,27 @@ function check(output, predicate) {
 }
 
 const withOp = (operations, op) => operations.filter((operation) => operation.op === op);
-const pathOf = (operation) => String(operation.path ?? "");
+const pathOf = (operation) => operation.path;
 const contentOf = (operation) => String(operation.content ?? "");
 const isRetiredPath = (path) => path.startsWith("learnings/retired/");
 const isIndexPath = (path) => path === "learnings/INDEX.md";
-const isActiveEntryPath = (path) =>
-  path.startsWith("learnings/") && !isRetiredPath(path) && !isIndexPath(path);
+const isNewEntryPath = (path) =>
+  /^(learnings|playbooks)\//.test(path) && !isRetiredPath(path) && !isIndexPath(path);
+const newEntryWrites = (operations) =>
+  withOp(operations, "write").filter((operation) => isNewEntryPath(pathOf(operation)));
 const summarize = (operations) =>
   JSON.stringify(operations.map(({ op, path, from }) => ({ op, path, from })));
 
+function missingNames(requirements) {
+  const missing = requirements.filter(([, present]) => !present).map(([name]) => name);
+  return missing.length === 0 ? "nothing" : missing.join(", ");
+}
+
 function opensOnlyTheApplicableEntry(output) {
   return check(output, (operations) => {
-    const reads = withOp(operations, "read").map(pathOf);
+    const reads = withOp(operations, "read").map((operation) => posix.basename(pathOf(operation)));
     const pass =
-      reads.includes("learnings/issue-link-in-review-comments.md") &&
-      !reads.includes("learnings/lockfile-with-deps.md");
+      reads.includes("issue-link-in-review-comments.md") && !reads.includes("lockfile-with-deps.md");
     return { pass, reason: `reads: ${JSON.stringify(reads)}` };
   });
 }
@@ -60,29 +106,24 @@ function writesNothingWhileApplying(output) {
 
 function capturesExactlyOneLearning(output) {
   return check(output, (operations) => {
-    const writes = withOp(operations, "write").filter((operation) =>
-      pathOf(operation).startsWith("learnings/"),
-    );
-    return { pass: writes.length === 1, reason: `writes under learnings/: ${summarize(writes)}` };
+    const writes = newEntryWrites(operations);
+    return { pass: writes.length === 1, reason: `new entries: ${summarize(writes)}` };
   });
 }
 
 function capturedLearningCarriesEvidence(output) {
   return check(output, (operations) => {
-    const [write] = withOp(operations, "write").filter((operation) =>
-      isActiveEntryPath(pathOf(operation)),
-    );
+    const [write] = newEntryWrites(operations);
     if (!write) {
-      return { pass: false, reason: "no write of an active learning entry" };
+      return { pass: false, reason: "no write of a new learning entry" };
     }
     const content = contentOf(write);
-    const missing = [
-      ["evidence", /evidence/],
-      ["learned_at", /learned_at/],
-      ["issue link", /\/PAP\/issues\/PAP-601/],
-    ].filter(([, pattern]) => !pattern.test(content));
-    const names = missing.map(([name]) => name).join(", ") || "nothing";
-    return { pass: missing.length === 0, reason: `missing: ${names}` };
+    const requirements = [
+      ["evidence key", /^evidence:/m.test(content)],
+      ["learned_at key", /^learned_at:/m.test(content)],
+      ["comment link", content.includes(CAPTURE_EVIDENCE_LINK)],
+    ];
+    return { pass: requirements.every(([, present]) => present), reason: `missing: ${missingNames(requirements)}` };
   });
 }
 
@@ -95,22 +136,50 @@ function updatesTheIndex(output) {
   });
 }
 
+function retirementMoves(operations) {
+  return withOp(operations, "move").filter(
+    (operation) =>
+      operation.from === `learnings/${RETIRED_ENTRY_SLUG}.md` && isRetiredPath(pathOf(operation)),
+  );
+}
+
 function retiresTheContradictedEntry(output) {
+  return check(output, (operations) => ({
+    pass: retirementMoves(operations).length === 1,
+    reason: `moves: ${summarize(withOp(operations, "move"))}`,
+  }));
+}
+
+function tombstoneCarriesReasonAndEvidence(output) {
   return check(output, (operations) => {
-    const moves = withOp(operations, "move");
-    const retirements = moves.filter(
-      (operation) =>
-        operation.from === `learnings/${RETIRED_ENTRY_SLUG}.md` && isRetiredPath(pathOf(operation)),
-    );
-    return { pass: retirements.length === 1, reason: `moves: ${summarize(moves)}` };
+    const [retirement] = retirementMoves(operations);
+    if (!retirement) {
+      return { pass: false, reason: "the entry was not moved to learnings/retired/" };
+    }
+    const tombstoneContents = [
+      retirement,
+      ...operations.filter(
+        (operation) =>
+          ["write", "update"].includes(operation.op) && pathOf(operation) === pathOf(retirement),
+      ),
+    ].map(contentOf);
+    const requirements = [
+      ["reason", tombstoneContents.some((content) => REASON_PATTERN.test(content))],
+      [
+        "contradicting comment link",
+        tombstoneContents.some((content) => content.includes(CONTRADICTING_EVIDENCE_LINK)),
+      ],
+    ];
+    return {
+      pass: requirements.every(([, present]) => present),
+      reason: `tombstone missing: ${missingNames(requirements)}`,
+    };
   });
 }
 
 function writesTheReplacement(output) {
   return check(output, (operations) => {
-    const writes = withOp(operations, "write").filter((operation) =>
-      isActiveEntryPath(pathOf(operation)),
-    );
+    const writes = newEntryWrites(operations);
     return { pass: writes.length >= 1, reason: `replacement writes: ${summarize(writes)}` };
   });
 }
@@ -140,7 +209,7 @@ function writesNothing(output) {
 function neverTargetsAgentsMd(output) {
   return check(output, (operations) => {
     const offenders = operations.filter((operation) =>
-      [operation.path, operation.from].some((target) => /(^|\/)AGENTS\.md$/.test(String(target ?? ""))),
+      [operation.path, operation.from].some((target) => /(^|\/)AGENTS\.md$/.test(target ?? "")),
     );
     return { pass: offenders.length === 0, reason: `operations on AGENTS.md: ${summarize(offenders)}` };
   });
@@ -153,7 +222,7 @@ function changesStayInsideLearningDirectories(output) {
       .filter((operation) =>
         [operation.path, operation.from]
           .filter((target) => target !== undefined)
-          .some((target) => !/^(learnings|playbooks)\//.test(String(target))),
+          .some((target) => !/^(learnings|playbooks)\//.test(target)),
       );
     return {
       pass: outside.length === 0,
@@ -169,6 +238,7 @@ const CHECKS = {
   capturedLearningCarriesEvidence,
   updatesTheIndex,
   retiresTheContradictedEntry,
+  tombstoneCarriesReasonAndEvidence,
   writesTheReplacement,
   indexDropsTheRetiredEntry,
   writesNothing,

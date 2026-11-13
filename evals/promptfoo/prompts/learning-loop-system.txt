@@ -20,7 +20,7 @@ Decide what to do with your agent directory next, following the skill section ab
 
 { "op": "read" | "write" | "update" | "move", "path": string, "from"?: string, "content"?: string }
 
-- read: open the file at path. It changes nothing.
+- read: open the file at path. It changes nothing. Write every path in full from $AGENT_HOME, for example { "op": "read", "path": "learnings/some-made-up-slug.md" }.
 - write: create a new file at path with content.
 - update: replace the whole content of the existing file at path with content.
 - move: move the file at from to path. When content is given, it becomes the new content of the moved file.
