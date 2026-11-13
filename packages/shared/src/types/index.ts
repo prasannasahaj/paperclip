@@ -971,7 +971,8 @@ export type {
   RoutineListItem,
 } from "./routine.js";
 export type { CostEvent, CostSummary, CostDataQualityItem, CostDataQualityReport, CostDataQualityReason, IssueCostSummary, IssueCostSummaryAgent, CostByUser, CostByUserReport, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
-export type { CheckKind } from "./maturity.js";
+export { FAST_CHECK_BUDGET_MS } from "./maturity.js";
+export type { CheckKind, MaturityFindingCode, MaturityFinding, CheckKindStats, ModelMixEntry, IssueMaturityScorecard } from "./maturity.js";
 export type { FinanceEvent, FinanceSummary, FinanceByBiller, FinanceByKind } from "./finance.js";
 export type {
   AgentWakeupResponse,
