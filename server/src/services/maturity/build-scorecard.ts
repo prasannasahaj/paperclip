@@ -112,14 +112,29 @@ function isReworkRun(run: RunRecord): boolean {
   return run.retryOfRunId !== null || run.scheduledRetryAttempt > 0 || run.continuationAttempt > 0;
 }
 
+function runtimeMsByRunId(runs: RunRecord[]): Map<string, number> {
+  const runtimes = new Map<string, number>();
+  for (const run of runs) {
+    if (run.startedAtMs === null || run.finishedAtMs === null) continue;
+    const runtimeMs = run.finishedAtMs - run.startedAtMs;
+    if (runtimeMs > 0) runtimes.set(run.id, runtimeMs);
+  }
+  return runtimes;
+}
+
 function computeAgentWaitShare(commands: ToolCommandRecord[], runs: RunRecord[]): number | null {
-  const runtimeMs = runs.reduce((total, run) => {
-    if (run.startedAtMs === null || run.finishedAtMs === null) return total;
-    return total + (run.finishedAtMs - run.startedAtMs);
-  }, 0);
-  if (runtimeMs <= 0) return null;
-  const checkMs = commands.reduce((total, command) => total + (command.durationMs ?? 0), 0);
-  return checkMs / runtimeMs;
+  const runtimes = runtimeMsByRunId(runs);
+  let totalRuntimeMs = 0;
+  for (const runtimeMs of runtimes.values()) totalRuntimeMs += runtimeMs;
+  if (totalRuntimeMs === 0) return null;
+
+  const measuredDurations = commands
+    .filter((command) => runtimes.has(command.runId))
+    .map((command) => command.durationMs)
+    .filter((duration): duration is number => duration !== null);
+  if (measuredDurations.length === 0) return null;
+
+  return measuredDurations.reduce((total, duration) => total + duration, 0) / totalRuntimeMs;
 }
 
 function buildFindings(
