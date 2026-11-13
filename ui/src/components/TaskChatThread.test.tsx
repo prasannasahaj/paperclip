@@ -1661,6 +1661,24 @@ describe("TaskChatThread runtime transcript selection", () => {
     expect(nativeRuns.map((run) => run.id)).toEqual(["native-run"]);
   });
 
+  it("shows the task statusline while a run is working", () => {
+    const comment = {
+      id: "status-line-message", companyId: "company", issueId: "issue",
+      authorType: "user" as const, authorUserId: "board", authorAgentId: null,
+      body: "Check the sandbox configuration.",
+      presentation: null, metadata: null,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    renderThread({
+      comments: [comment], onAdd: async () => {}, issueStatus: "in_progress",
+      currentUserId: "board", issueAssigneeAgentId: "agent-1",
+      agentMap: new Map([["agent-1", { id: "agent-1", name: "Runner", adapterType: "paperclip_runner", icon: "code" } as Agent]]),
+      activeRun: nativeRunningRun(),
+    });
+    const statusLine = container.querySelector('[data-testid="task-chat-status-line"]');
+    expect(statusLine?.textContent).toMatch(/^Running/);
+  });
+
   it.each([false, true])("keeps the runner identity and activity mounted through startup (mobile=%s)", async (mobile) => {
     sidebarState.isMobile = mobile;
     const run = nativeRunningRun();
