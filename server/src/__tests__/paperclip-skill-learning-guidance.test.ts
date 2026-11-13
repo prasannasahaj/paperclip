@@ -80,6 +80,37 @@ describe("paperclip skill learning guidance", () => {
     expect(section).toContain("secrets");
   });
 
+  it("indexes playbooks beside learnings", async () => {
+    const section = await learningSection();
+    expect(section).toContain("- [playbook: slug](../playbooks/slug.md) · last_confirmed: YYYY-MM-DD · applies_when");
+    expect(section).toContain("when a situation recurs and has a procedure, not for a one-off fact");
+  });
+
+  it("keeps the index newest first and consolidates it when truncated", async () => {
+    const section = await learningSection();
+    expect(section).toContain("sorted by `last_confirmed`, newest first");
+    expect(section).toContain("When the run guidance says the index was truncated, merge overlapping entries");
+    expect(section).toContain("retire entries not confirmed in 90 days, writing a tombstone whose reason is \"stale\"");
+  });
+
+  it("routes rule and skill changes through an accepted Reflection Coach confirmation", async () => {
+    expect(await learningSection()).toContain(
+      "Reflection Coach proposal that the user or board accepts via `request_confirmation`",
+    );
+  });
+
+  it("skips the loop without a persistent agent directory", async () => {
+    expect(await learningSection()).toContain(
+      "Skip this loop when the run guidance does not name a persistent agent directory",
+    );
+  });
+
+  it("separates learnings from PARA memory and names the wake reason", async () => {
+    const section = await learningSection();
+    expect(section).toContain("PARA memory holds facts about people, projects and companies");
+    expect(section).toContain("wake reason `execution_changes_requested`");
+  });
+
   it("step 8 points at the section", async () => {
     expect(await heartbeatStepEight()).toContain("Learning From Your Work");
   });
