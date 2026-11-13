@@ -1,3 +1,4 @@
+import { createProviderFailure } from "../provider-failure.js";
 import {
   CODEX_BLOCK_RESULT_OUTPUT_SCHEMA,
   CODEX_INVALID_REQUEST,
@@ -478,6 +479,30 @@ describe("Codex app-server Codex driver", () => {
       recovered: false,
       reason: "provider resumed with a different tagged session identity",
     });
+  });
+
+  it("keeps the provider failure of a rejected resume while the reason stays a string", async () => {
+    const providerFailure = createProviderFailure({
+      provider: "acpx", phase: "startup", category: "unknown", message: "saved session could not be restored",
+    })!;
+    const first = new FakeCodexTransport();
+    const second = new FakeCodexTransport();
+    second.rejectMethods.set("thread/resume", Object.defineProperty(
+      new Error("PRP command run.attach failed"), "runnerCommandResult", {
+        value: { status: "failed", commandType: "run.attach",
+          result: { code: "command_execution_failed", message: "Provider request failed", providerFailure } },
+        enumerable: false,
+      }));
+    const driver = makeDriver([first, second]);
+    const original = await driver.openSession({
+      runId: "run-rejected-resume", normalizedSessionId: "normalized-rejected-resume", workingDirectory: WORKSPACE,
+    });
+    const snapshot = await original.snapshot();
+    await original.close({ reason: "transport lost" });
+
+    const recovery = await driver.recoverSession?.(snapshot);
+    expect(recovery).toMatchObject({ recovered: false, reason: expect.stringContaining("PRP command run.attach failed") });
+    expect(recovery?.providerFailure).toEqual(providerFailure);
   });
 
   it("resumes and reconciles the exact provider thread after transport loss", async () => {

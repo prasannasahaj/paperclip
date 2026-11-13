@@ -89,6 +89,7 @@ export interface NativeSessionRecoveryResult {
   failureClass?: HarnessSessionRecoveryResult["failureClass"];
   resumeStateUnavailable?: HarnessSessionRecoveryResult["resumeStateUnavailable"];
   runnerExitConfirmed?: HarnessSessionRecoveryResult["runnerExitConfirmed"];
+  providerFailure?: ProviderFailure;
 }
 
 /** Runner-owned cause: the process was restored, but its active turn was lost. */

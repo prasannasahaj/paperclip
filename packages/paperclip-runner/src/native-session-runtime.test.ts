@@ -1,5 +1,5 @@
 import { validatePrpStructuredRunResult } from "./protocol/replay-contract.js";
-import { createProviderFailure } from "./drivers/provider-failure.js";
+import { createProviderFailure, providerFailureFromError } from "./drivers/provider-failure.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6633,6 +6633,34 @@ describe("executeNativeSession recovery", () => {
     expect(openRun).not.toHaveBeenCalled();
     expect(completeRun).not.toHaveBeenCalled();
     expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the provider failure on an unclassified recovery failure", async () => {
+    const providerFailure = createProviderFailure({
+      provider: "acpx", phase: "startup", category: "unknown", message: "saved session could not be restored",
+    })!;
+    const checkpoint: PersistedNativeSession = {
+      backendKind: "mock", sessionId: "driver-unclassified", identity,
+      providerSessionId: "provider-unclassified", providerRecoveryPolicy: "same_session_only",
+      cursor: "0", activeTurnId: null, pendingRuntimeRequests: [], lineage: [],
+    };
+    const backend: NativeSessionBackend = {
+      descriptor: async () => ({ kind: "mock", name: "unclassified", version: "1",
+        capabilities: { resume: true, typedEvents: true, steering: false, interruption: true, structuredResult: true } }),
+      openSession: vi.fn(), openReplacementSession: vi.fn(),
+      recoverSession: async () => ({ recovered: false, reason: "Error: PRP command run.attach failed", providerFailure }),
+    };
+    const port: ControlPlanePort = {
+      openRun: vi.fn(async () => undefined), appendEvent: vi.fn(), completeRun: vi.fn(),
+      loadSessionCheckpoint: async () => structuredClone(checkpoint),
+      replayEvents: async () => ({ events: [], highestContiguousSourceSeq: 0 }),
+    };
+    const failure = await executeNativeSession({
+      input, backend, controlPlane: port,
+      runnerInstanceId: "runner-recovery", controlPlaneInstanceId: "control-recovery",
+    }).catch((error: unknown) => error);
+    expect((failure as Error).message).toBe("native_session_recovery_failed: Error: PRP command run.attach failed");
+    expect(providerFailureFromError(failure)).toEqual(providerFailure);
   });
 
   it("types a runner-proven incompatible session when same-session recovery is required", async () => {

@@ -11,6 +11,7 @@ import {
 import type { PrpEvent, PrpStructuredRunResult, PrpTerminalState } from "../protocol/replay-contract.js";
 import { NativeSessionProtocolIntegrityError, type NativeSession } from "../contracts/native-session-backend.js";
 import { HarnessDriverBackend } from "./harness-driver-backend.js";
+import { createProviderFailure } from "../drivers/provider-failure.js";
 
 const result: PrpStructuredRunResult = {
   schema: "paperclip.run_result.v1",
@@ -394,6 +395,23 @@ describe("HarnessDriverBackend", () => {
       identity: { runId: "run-2", sessionId: "session-1", companyId: "company-1", issueId: "issue-1", agentId: "agent-1" },
     }, { signal: new AbortController().signal })).resolves.toEqual({
       recovered: false, reason: "Error: PRP command run.attach failed", failureClass: PROVIDER_STATE_INCOMPATIBLE,
+    });
+  });
+
+  it("keeps the provider failure of a failed recovery", async () => {
+    const providerFailure = createProviderFailure({
+      provider: "acpx", phase: "startup", category: "unknown", message: "saved session could not be restored",
+    })!;
+    const backend = new HarnessDriverBackend({
+      ...driver,
+      recoverSession: async () => ({ recovered: false, reason: "Error: PRP command run.attach failed", providerFailure }),
+    });
+    await expect(backend.recoverSession({
+      backendKind: "runner", driverKind: "fake", sessionId: "driver-1", providerSessionId: "provider-1",
+      providerIdentity,
+      identity: { runId: "run-2", sessionId: "session-1", companyId: "company-1", issueId: "issue-1", agentId: "agent-1" },
+    }, { signal: new AbortController().signal })).resolves.toEqual({
+      recovered: false, reason: "Error: PRP command run.attach failed", providerFailure,
     });
   });
 

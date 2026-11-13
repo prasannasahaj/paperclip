@@ -79,6 +79,15 @@ interface NativeSessionCleanupDomain {
   resources: readonly string[];
 }
 
+function withRecoveryProviderFailure<TFailure extends Error>(
+  failure: TFailure,
+  recovery: { providerFailure?: unknown },
+): TFailure {
+  const providerFailure = readProviderFailure(recovery.providerFailure);
+  if (providerFailure) Object.defineProperty(failure, "providerFailure", { value: providerFailure, enumerable: false });
+  return failure;
+}
+
 function nativeSessionCleanupScopeBlocks(
   owner: NativeSessionCleanupDomain,
   admission: NativeSessionCleanupDomain,
@@ -2636,11 +2645,11 @@ export async function executeNativeSession(
       });
       if (!replacementAllowed && !governedWaitFollowUpLostState) {
         if (recovery.failureClass === PROVIDER_STATE_INCOMPATIBLE) {
-          throw new NativeProviderStateIncompatibleError(recovery.reason ?? "unknown");
+          throw withRecoveryProviderFailure(new NativeProviderStateIncompatibleError(recovery.reason ?? "unknown"), recovery);
         }
-        const failure = new Error(
+        const failure = withRecoveryProviderFailure(new Error(
           `native_session_recovery_failed: ${recovery.reason ?? "unknown"}`,
-        );
+        ), recovery);
         if (recovery.runnerExitConfirmed === true) {
           Object.defineProperty(failure, "runnerExitConfirmed", { value: true, enumerable: false });
         }

@@ -1,5 +1,6 @@
 import { usesPreconfiguredHome } from "../preconfigured-home.js";
 import { codexProviderFailure } from "./provider-failure.js";
+import { providerFailureFromError } from "../provider-failure.js";
 import { writeManagedCodexObservability, redactObservabilityDiagnostic } from "../agent-observability.js";
 import { trustCodexStartupRoot } from "./codex-startup-trust.js";
 import { readCodexThreadState, readCodexTurnMetadata } from "./codex-history.js";
@@ -805,12 +806,14 @@ export class CodexAppServerDriver implements HarnessDriver {
       const resumeStateUnavailable = !classified && isRunnerResumeStateUnavailable(error)
         && !persistedSessionInFlight(snapshot);
       const failureClass = classified ?? (resumeStateUnavailable ? PROVIDER_STATE_INCOMPATIBLE : undefined);
+      const providerFailure = providerFailureFromError(error);
       return {
         recovered: false,
         reason: redactCodexDiagnostic(String(error)),
         ...(failureClass ? { failureClass } : {}),
         ...(resumeStateUnavailable ? { resumeStateUnavailable: true as const } : {}),
         ...(transport.runnerExitConfirmed?.() === true ? { runnerExitConfirmed: true as const } : {}),
+        ...(providerFailure ? { providerFailure } : {}),
       };
     } finally {
       cancellation.detach();
