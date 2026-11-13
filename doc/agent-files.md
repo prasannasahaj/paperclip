@@ -153,7 +153,8 @@ playbooks/
 
 The server injects `learnings/INDEX.md` into each run's prompt guidance, after
 the agent directory guidance, for every run that restores an agent directory.
-Only the index is injected; the agent opens the linked files when it needs the
+A run on the fallback path, where no editable working copy is registered (the
+403 case), gets no index. Only the index is injected; the agent opens the linked files when it needs the
 detail. The server reads at most 4096 bytes, cutting at the last whole line and
 noting the truncation in the guidance. It never parses the index, so its format
 belongs to the agent. A missing, empty, non-UTF-8 or symlinked index, or one
