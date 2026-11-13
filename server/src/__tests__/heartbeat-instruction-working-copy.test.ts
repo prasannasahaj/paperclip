@@ -8,6 +8,8 @@ import { agents, authUsers, companies, companyMemberships, createDb, heartbeatRu
 import { registerServerAdapter, unregisterServerAdapter } from "../adapters/index.js";
 import { heartbeatService } from "../services/heartbeat.js";
 import { resolveManagedInstructionsRoot } from "../services/agent-instructions.js";
+import { AGENT_FILES_CONTRACT } from "../services/agent-file-store.js";
+import { composeInstructionGuidance } from "../services/heartbeat/instruction-working-copy.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
 const cleanup = vi.hoisted(() => ({ failures: new Set<string>(), revocations: new Set<string>(), attempts: new Map<string, number>() }));
@@ -31,6 +33,29 @@ vi.mock("../services/agent-instruction-working-copies.js", async importOriginal 
 const support = await getEmbeddedPostgresTestSupport();
 const describePostgres = support.supported ? describe : describe.skip;
 if (!support.supported) console.warn(`Skipping heartbeat instruction copies tests: ${support.reason}`);
+
+describe("composeInstructionGuidance", () => {
+  const today = new Date("2026-11-13T00:00:00Z");
+  const learningsIndex = { text: "- [use-bail](use-bail.md) · last_confirmed: 2026-11-01 · run focused tests first\n", truncated: false };
+  const agentDirectoryCopy = { executionRoot: "/agent-home", entryFile: "AGENTS.md", receipt: { schema: AGENT_FILES_CONTRACT } };
+  const legacyCopy = { executionRoot: "/legacy-copy", entryFile: "AGENTS.md", receipt: {} };
+
+  it("appends the learnings guidance after the directory guidance, separated by a blank line", () => {
+    const withoutLearnings = composeInstructionGuidance(agentDirectoryCopy, null, today);
+    const withLearnings = composeInstructionGuidance(agentDirectoryCopy, learningsIndex, today);
+    expect(withLearnings.startsWith(`${withoutLearnings}\n\n`)).toBe(true);
+    expect(withLearnings).toContain(learningsIndex.text);
+    expect(withLearnings).toContain("learnings/INDEX.md");
+  });
+
+  it("adds nothing when the agent has no learnings index", () => {
+    expect(composeInstructionGuidance(agentDirectoryCopy, null, today)).not.toContain("learnings/INDEX.md");
+  });
+
+  it("adds nothing for a legacy instruction copy", () => {
+    expect(composeInstructionGuidance(legacyCopy, learningsIndex, today)).not.toContain("learnings/INDEX.md");
+  });
+});
 
 describePostgres("heartbeat instruction working-copy lifecycle", () => {
   const adapterType = "instruction_working_copy_test";
@@ -121,6 +146,34 @@ describePostgres("heartbeat instruction working-copy lifecycle", () => {
     expect(second.finished.status, second.finished.error ?? undefined).toBe("succeeded");
     expect(second.input.before).toBe(edited);
     expect(second.finished.resultJson?.instructionSave).toMatchObject({ state: "unchanged" });
+  });
+
+  async function seedLearningsIndex(root: string, content: string) {
+    await fs.mkdir(path.join(root, "learnings"), { recursive: true });
+    await fs.writeFile(path.join(root, "learnings", "INDEX.md"), content);
+  }
+
+  const learningsIndexLine = "- [use-bail](use-bail.md) · last_confirmed: 2026-11-01 · run focused tests first";
+
+  it("injects the learnings index into the task prompt", async () => {
+    const f = await seed();
+    await seedLearningsIndex(f.root, `${learningsIndexLine}\n`);
+    const { finished, input } = await execute(f);
+    expect(finished.status, finished.error ?? undefined).toBe("succeeded");
+    for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
+      expect(input.context[key]).toContain(learningsIndexLine);
+      expect(input.context[key]).toContain("learnings/INDEX.md");
+      expect(input.context[key]).toContain("Your persistent agent directory is");
+    }
+  });
+
+  it("adds nothing when the agent has no learnings index", async () => {
+    const f = await seed();
+    const { finished, input } = await execute(f);
+    expect(finished.status, finished.error ?? undefined).toBe("succeeded");
+    for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
+      expect(input.context[key]).not.toContain("learnings/INDEX.md");
+    }
   });
 
   it("continues without a copy or save claim when access is revoked after dispatch admission", async () => {
