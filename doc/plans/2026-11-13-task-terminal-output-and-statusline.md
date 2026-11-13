@@ -1,158 +1,93 @@
-# Task Terminal Output and Statusline Implementation Plan
+# Task Statusline, Run Resource Limits and Run-End Reaping Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Make a Paperclip task show what a running agent is doing the way Claude Code does: live command output inline, and a statusline for the task.
+**Goal:** Make slow or quiet agent runs visible and cheaper: a task statusline, a cap on test parallelism inside agent runs, verification guidance for agents, and cleanup of processes a finished run left behind.
 
-**Architecture:** Three pieces, in order. (1) A UI-only terminal-style output tail on command rows, with no 600-character clip. (2) Live streaming of command output for the Claude/ACP path, gated on a spike that proves what the event stream carries. (3) A task statusline built only from data the run already exposes.
+**Architecture:** Four independent tasks. The statusline is UI-only. The worker cap is an environment default added where every adapter builds its run environment. The guidance is a section in the runtime skill. Reaping kills only the finished run's own process group.
 
-**Tech Stack:** React + Vite UI (`ui/`), Vitest, runner event projection in `packages/paperclip-runner`, `DESIGN.md` tokens (token-only rule).
+**Tech Stack:** React + Vite UI, Vitest, `packages/adapter-utils`, `server/`.
 
-**Spec:** Conversation of 2026-11-13. The user asked for live streaming as well as the UI fix, wants Paperclip to "almost behave like Claude Code", and said "I dont see statusline for tasks" without naming fields. The statusline fields in Task 3 are the author's call.
+**Supersedes:** the earlier output-tail and live-streaming scope, dropped by the user on 2026-11-13. The spike that informed it is in `2026-11-13-task-terminal-output-spike-notes.md`.
 
 ## Global Constraints
 
-- Follow `DESIGN.md`: tokens only, no hardcoded colors or sizes. Existing rows use `text-(length:--text-micro)` and `font-mono`.
-- No source code comments (user rule). Self-documenting names only.
-- Runner caps command output at `MAX_OUTPUT = 64 * 1024` bytes, keeping the tail (`packages/paperclip-runner/src/provider-events.ts:136`, `:687`). The UI must not clip below that for command rows.
-- Keep contracts synchronized across `packages/shared`, `server`, `ui` if any payload shape changes (`AGENTS.md` section 5.2).
-- Output is untrusted agent text. Render as text, never as HTML.
-- Verification is `pnpm verify`. Do not run repo-wide checks by default (`AGENTS.md` section 7).
+- No source code comments. Self-documenting names only.
+- `DESIGN.md` token-only rule for UI.
+- Reaping may kill only processes in the finished run's own process group. Never match by name or pattern. (User approval, 2026-11-13.)
+- Run-environment defaults must never override a value the operator or agent config set explicitly.
+- Verification is `pnpm verify`, not repo-wide checks.
 
 ## Review Focus
 
-- Output with ANSI escape codes (colors, cursor moves): must render as readable text, not raw `\u001b[` noise.
-- Output with `\r` progress rewrites (npm, curl): must show the last rewrite of a line, not hundreds of lines.
-- Output of 64 KB with very long single lines: row must not overflow horizontally or freeze the thread.
-- A command with empty output that exits 0: must say so, not show a blank panel.
-- A run that is interrupted mid-stream: partial output stays visible and the row reads "Interrupted", not "Running".
-- Many concurrent running commands in one turn: only bounded work per render (see `TaskChatThreadView.performance.test.tsx`).
+- Operator sets `VITEST_MAX_WORKERS` themselves: the default must not replace it.
+- A host with 1-3 cores: worker cap must be at least 1.
+- A run that exits cleanly with no children: reaping must be a no-op and must not throw.
+- A process group id that is already gone or recycled: reaping must not signal an unrelated group.
+- Statusline with no usage, no model and no start time: renders nothing, not empty separators.
 
 ---
 
-## Task 0: Spike - what does a Claude run actually stream?
-
-Throwaway investigation. Produces a recorded fixture and a written decision, no product code.
+## Task 1: Cap test parallelism in agent runs
 
 **Files:**
-- Create: `doc/plans/2026-11-13-task-terminal-output-spike-notes.md` (findings)
-- Create: `packages/paperclip-runner/src/drivers/acpx/__fixtures__/claude-bash-stream.jsonl` (recorded raw ACP events, secrets scrubbed)
+- Modify: `packages/adapter-utils/src/server-utils.ts` (`buildPaperclipEnv`, around `:3302-3331`)
+- Test: `packages/adapter-utils/src/server-utils.test.ts` (existing `describe("buildPaperclipEnv")` at `:3942`)
 
 **Interfaces:**
-- Produces: a yes/no on each question below, which selects Task 2's branch.
+- Produces: `defaultAgentTestWorkerCount(cpuCount: number): number` returning `Math.max(1, Math.floor(cpuCount / 4))`, exported from `server-utils.ts`. `buildPaperclipEnv` adds `VITEST_MAX_WORKERS` set to that count as a string unless the host environment already defines `VITEST_MAX_WORKERS` or `PAPERCLIP_AGENT_TEST_WORKERS` (the latter, when set, is the value used).
 
-- [ ] **Step 1: Run a real Claude task whose agent runs `for i in 1 2 3 4 5; do echo line $i; sleep 3; done` as a foreground Bash call, then the same with `run_in_background`.**
-- [ ] **Step 2: Capture the raw ACP events for both runs and note, for each: does any `tool_call_update` with `rawOutput` or `content` arrive before the command exits?**
-- [ ] **Step 3: For the background case, note where the output lives (task output file path) and whether the runner process can read it.**
-- [ ] **Step 4: Write the answers in the notes file. Commit the fixture and notes.**
+- [ ] **Step 1: Failing tests.** `defaultAgentTestWorkerCount(15)` is `3`; `(1)` and `(3)` are `1`. `buildPaperclipEnv` result contains `VITEST_MAX_WORKERS` equal to `String(defaultAgentTestWorkerCount(os.availableParallelism()))`; with `process.env.PAPERCLIP_AGENT_TEST_WORKERS = "2"` it is `"2"`; with `process.env.VITEST_MAX_WORKERS = "9"` the key is absent so the host value stands.
+- [ ] **Step 2: Run `pnpm vitest run packages/adapter-utils/src/server-utils.test.ts -t buildPaperclipEnv`. Expected: FAIL.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Re-run. Expected: PASS.**
+- [ ] **Step 5: Commit** `feat(adapter-utils): cap test workers in agent run environments`.
 
-```bash
-git add doc/plans/2026-11-13-task-terminal-output-spike-notes.md
-git commit -m "docs: record what Claude ACP streams for long commands"
-```
-
-Decision rule: if foreground output arrives incrementally, Task 2 is branch A. If not, Task 2 is branch B. If background output is only readable from a file, Task 2 also needs branch C.
-
----
-
-## Task 1: Inline terminal output tail on command rows
-
-UI-only. Works with whatever output the transcript already holds, including completed results and Codex deltas.
+## Task 2: Verification discipline in the runtime skill
 
 **Files:**
-- Create: `ui/src/components/task-chat/tool-output.ts`
-- Create: `ui/src/components/task-chat/tool-output.test.ts`
-- Create: `ui/src/components/task-chat/TaskChatToolOutput.tsx`
-- Create: `ui/src/components/task-chat/TaskChatToolOutput.test.tsx`
-- Modify: `ui/src/components/task-chat/TaskChatToolCard.tsx` (render the tail for command rows)
-- Modify: `ui/src/components/task-chat/transcript-adapter.ts:292`, `:662-670` (command output no longer clipped at 600)
-- Modify: `ui/src/components/task-chat/task-chat-model.ts:240` (add `output` field to `TaskChatToolItem`)
+- Modify: `skills/paperclip/SKILL.md` (new `## Verifying your work` section)
+- Test: existing skill content tests, if any assert section structure (check with `grep -rn "skills/paperclip/SKILL.md" --include=*.test.ts`)
 
-**Interfaces:**
-- Produces in `tool-output.ts`:
-  - `normalizeTerminalOutput(raw: string): string` strips ANSI escape sequences and collapses `\r` rewrites to the last rewrite per line.
-  - `tailLines(text: string, count: number): { lines: string[]; hiddenLineCount: number }`.
-  - `COMMAND_OUTPUT_PREVIEW_LINES = 10`.
-- Produces in `task-chat-model.ts`: `TaskChatToolItem.output?: string` holding full normalized command output. `detail` stays for non-command tools.
-- Produces: `TaskChatToolOutput({ output, running, exitCode }: { output?: string; running: boolean; exitCode?: number | null })`.
+- [ ] **Step 1: Find tests that read `SKILL.md` and note their constraints.**
+- [ ] **Step 2: Add the section.** Rules: run the focused test for the changed files first, with fail-fast (`--bail=1`); run the full suite at most once per change, not once per push; if a hook or check fails for environmental reasons (missing binary, sandbox flag), report it and stop retrying the same command; redirect long output to a file and read its tail; say in a task comment what is running when a command will take over a minute.
+- [ ] **Step 3: Run the tests found in Step 1. Expected: PASS.**
+- [ ] **Step 4: Commit** `docs(skill): add verification discipline for agent runs`.
 
-- [ ] **Step 1: Write failing tests in `tool-output.test.ts`.** Cases: `normalizeTerminalOutput("\u001b[31mfail\u001b[0m")` equals `"fail"`; `normalizeTerminalOutput("10%\r50%\r100%")` equals `"100%"`; `tailLines` of 25 lines with count 10 returns the last 10 lines and `hiddenLineCount` 15; empty string returns zero lines.
-- [ ] **Step 2: Run `pnpm vitest run ui/src/components/task-chat/tool-output.test.ts`. Expected: FAIL, module not found.**
-- [ ] **Step 3: Implement `normalizeTerminalOutput` and `tailLines` in `tool-output.ts`.**
-- [ ] **Step 4: Run the same test. Expected: PASS.**
-- [ ] **Step 5: Write failing tests in `TaskChatToolOutput.test.tsx`.** Cases: shows only the last 10 of 25 lines plus a "15 earlier lines" control; clicking it shows all 25; `running` with no output renders a "Waiting for output" line; finished with empty output and `exitCode` 0 renders "No output"; `exitCode` 1 renders the code in destructive tone via a `data-testid="task-chat-tool-exit-code"`.
-- [ ] **Step 6: Run it. Expected: FAIL.**
-- [ ] **Step 7: Implement `TaskChatToolOutput` as a mono, left-rail block matching the existing `task-chat-tool-target-detail` styling in `TaskChatToolCard.tsx:130-137`. Cap height with scroll, `whitespace-pre-wrap`, `break-words`. Auto-follow the tail while `running`.**
-- [ ] **Step 8: In `transcript-adapter.ts`, route `tool_result` content for command tools (`operation === "execute"`) into `TaskChatToolItem.output` via `normalizeTerminalOutput`, appending when `entry.delta`. Leave the 600 clip for every other tool. Add a test in `transcript-adapter.test.ts`: a 5,000-character command result is stored whole in `output`.**
-- [ ] **Step 9: In `TaskChatToolCard.tsx`, render `TaskChatToolOutput` for command rows, expanded by default while `status === "in_progress"`, collapsed to the preview otherwise. Extend `TaskChatRunnerActivityGroup.toolRows.test.tsx` with a running command that shows streamed lines.**
-- [ ] **Step 10: Run `pnpm verify`. Expected: pass or exit 2 with focused checks green. Commit.**
-
-```bash
-git add ui/src/components/task-chat
-git commit -m "feat(task-chat): show command output inline on tool rows"
-```
-
----
-
-## Task 2: Live streaming of command output (gated on Task 0)
-
-Choose the branch the spike selected. Each branch ends with the Task 1 UI receiving `tool_result` entries with `delta: true` while the command runs.
+## Task 3: Reap a finished run's own process group
 
 **Files:**
-- Modify: `packages/paperclip-runner/src/provider-events.ts` (around `:1655-1700`, the `tool_call` projection)
-- Modify: `ui/src/adapters/paperclip-runner/index.ts` (around `:250-295`, where output deltas become `tool_result` with `delta: true`)
-- Test: `packages/paperclip-runner/src/provider-events.test.ts`, `ui/src/adapters/paperclip-runner/index.test.ts`
+- Investigate first: `packages/adapter-utils/src/acpx-engine/local-process-control.ts`, `server/src/services/native-runtime/native-codex-runner.ts:391`
+- Test: new case in the module's existing test file
 
 **Interfaces:**
-- Consumes: Task 1's `TaskChatToolItem.output` path via `tool_result` with `delta: true`.
-- Produces: `tool.execution.progressed` payloads carrying the new output text in `progress` for ACP tool calls, matching the shape Codex already produces at `provider-events.ts:1091-1105`.
+- Produces: `reapRunProcessGroup(processGroupId: number | null, signal?: NodeJS.Signals): "no_group" | "already_gone" | "signalled"` in the module where run teardown lives. Refuses ids that are not positive integers and ids equal to the server's own group.
 
-- [ ] **Branch A (ACP streams output):** Step 1: failing test in `provider-events.test.ts` feeding the Task 0 fixture and asserting a `tool.execution.progressed` event per incremental `rawOutput`, with only the new suffix in `progress`. Step 2: implement the diffing of cumulative `rawOutput` into suffix deltas inside the `tool_call` projection. Step 3: failing then passing test in `ui/src/adapters/paperclip-runner/index.test.ts` that the suffix becomes `tool_result` with `delta: true`.
-- [ ] **Branch B (ACP does not stream):** write down in the spike notes that live output is not available from Claude over ACP, show the elapsed-time and "Waiting for output" state from Task 1, and open a follow-up issue. Do not fake streaming.
-- [ ] **Branch C (background output only in a file):** add a runner-side tail of the task output file that emits `tool.execution.progressed`. Only the runner process may read the path; validate that the path is inside the run's own sandbox before reading, and cap reads to the last `MAX_OUTPUT` bytes. Requires its own failing test using a temp file.
-- [ ] **Final step: run `pnpm verify` and commit.**
+- [ ] **Step 1: Write a failing test** that spawns a detached child which spawns a sleeping grandchild, ends the "run", and asserts the grandchild is gone afterwards. If it already passes, record that in the ledger, add the test as a regression guard, and stop the task: no fix needed.
+- [ ] **Step 2: Run it. Expected: FAIL if descendants survive.**
+- [ ] **Step 3: Implement `reapRunProcessGroup` and call it at run completion and cancellation.**
+- [ ] **Step 4: Re-run. Expected: PASS. Also test `null`, a dead group id and the server's own group id.**
+- [ ] **Step 5: Commit** `fix(runtime): reap a finished run's process group`.
 
-```bash
-git add packages/paperclip-runner ui/src/adapters/paperclip-runner
-git commit -m "feat(runner): stream command output while a Claude command runs"
-```
-
----
-
-## Task 3: Task statusline
-
-Fields are the author's call, built only from data the run already exposes: run state, current activity label, elapsed time, model, token and cost totals, worktree or branch. Context-window percent is included only if the Task 0 events or `usageJson` carry it; otherwise omitted.
+## Task 4: Task statusline
 
 **Files:**
-- Create: `ui/src/components/task-chat/task-status-line.ts` (pure builder)
-- Create: `ui/src/components/task-chat/task-status-line.test.ts`
-- Create: `ui/src/components/task-chat/TaskChatStatusLine.tsx`
-- Create: `ui/src/components/task-chat/TaskChatStatusLine.test.tsx`
-- Modify: `ui/src/components/task-chat/TaskChatThreadView.tsx` (mount near the composer, around the existing `TaskChatStatusPill` at `:211`)
-- Reuse: `summarizeRunUsage` from `@/lib/run-usage-summary`, `formatTokens` from `@/lib/utils`
+- Create: `ui/src/components/task-chat/task-status-line.ts`, `task-status-line.test.ts`, `TaskChatStatusLine.tsx`, `TaskChatStatusLine.test.tsx`
+- Modify: `ui/src/components/task-chat/TaskChatThreadView.tsx` (mount beside `TaskChatStatusPill`, around `:211`)
+- Reuse: `summarizeRunUsage` (`@/lib/run-usage-summary`), `formatTokens` (`@/lib/utils`)
 
 **Interfaces:**
-- Produces: `buildTaskStatusLine(input: { runState: string; activityLabel?: string; startedAt?: string; now: number; model?: string; usageJson?: Record<string, unknown> | null; worktree?: string }): TaskStatusSegment[]` where `TaskStatusSegment = { id: "state" | "activity" | "elapsed" | "model" | "usage" | "worktree"; text: string }`. Segments with no data are omitted.
-- Produces: `TaskChatStatusLine(props: Parameters<typeof buildTaskStatusLine>[0])`.
+- Produces: `buildTaskStatusLine(input: { runState: string; activityLabel?: string; startedAt?: string; now: number; model?: string; usageJson?: Record<string, unknown> | null; worktree?: string }): TaskStatusSegment[]`, with `TaskStatusSegment = { id: "state" | "activity" | "elapsed" | "model" | "usage" | "worktree"; text: string }`. Segments without data are omitted.
+- Produces: `TaskChatStatusLine` taking the same input and rendering segments joined by `·` in mono micro text, `data-testid="task-chat-status-line"`, ticking once a second while the run is active.
 
-- [ ] **Step 1: Write failing tests in `task-status-line.test.ts`.** Cases: a running run with `startedAt` 8m28s before `now` yields an `elapsed` segment `"8m 28s"`; missing `model` omits the `model` segment; usage with `inputTokens` 12000, `outputTokens` 800, `costUsd` 0.42 yields `"↑12k ↓800 · $0.42"` using `formatTokens`; a finished run has no `activity` segment.
-- [ ] **Step 2: Run `pnpm vitest run ui/src/components/task-chat/task-status-line.test.ts`. Expected: FAIL.**
-- [ ] **Step 3: Implement `buildTaskStatusLine`. Format elapsed as `Xm Ys`, under a minute as `Ys`.**
-- [ ] **Step 4: Run it. Expected: PASS.**
-- [ ] **Step 5: Write failing render tests in `TaskChatStatusLine.test.tsx`: segments render joined by `·` in mono micro text with `data-testid="task-chat-status-line"`; renders nothing when no segments; elapsed ticks each second while running (fake timers).**
-- [ ] **Step 6: Implement `TaskChatStatusLine` following `TaskChatRunUsageFooter.tsx` styling. Tick via a single interval cleaned up on unmount.**
-- [ ] **Step 7: Mount in `TaskChatThreadView.tsx`; extend `TaskChatThreadView.performance.test.tsx` to confirm the tick does not rerender the whole thread.**
-- [ ] **Step 8: Run `pnpm verify` and commit.**
-
-```bash
-git add ui/src/components/task-chat
-git commit -m "feat(task-chat): add task statusline"
-```
-
----
+- [ ] **Step 1: Failing tests for the builder.** Start 8m28s before `now` gives elapsed `"8m 28s"`; under a minute gives `"42s"`; missing model omits the model segment; usage 12000 in / 800 out / $0.42 gives `"↑12k ↓800 · $0.42"`; a finished run has no activity segment; no data at all gives `[]`.
+- [ ] **Step 2: Run. Expected: FAIL.** **Step 3: Implement. Step 4: Run. Expected: PASS.**
+- [ ] **Step 5: Failing render tests:** renders segments with `·`; renders nothing for `[]`; elapsed advances with fake timers; interval cleared on unmount.
+- [ ] **Step 6: Implement the component, mount it, extend `TaskChatThreadView.performance.test.tsx` so the tick does not rerender the thread.**
+- [ ] **Step 7: `pnpm verify`. Commit** `feat(task-chat): add task statusline`.
 
 ## Self-review
 
-- Spec coverage: inline output (Task 1), live streaming (Tasks 0 and 2), statusline (Task 3). The "behave like Claude Code" ask is covered by those three, not by a wider rebuild.
-- Known gap: Task 2 cannot be fully specified before the spike. Its branches are the decision points, not placeholders.
-- Types: `TaskChatToolItem.output` is defined in Task 1 and consumed by Task 2 only through the existing `tool_result` and `delta` path.
+- Coverage: statusline (4), performance via worker cap (1) and guidance (2), dangling processes (3).
+- Task 3 may end as "already correct, regression test added". That is a valid result.
+- Known limit: Task 1 only affects tools that read `VITEST_MAX_WORKERS`; a repo's own hook that hardcodes workers is out of reach.
