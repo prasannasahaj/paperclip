@@ -31,6 +31,7 @@ export interface BuildScorecardInput {
   includeDescendants: boolean;
   truncated: boolean;
   commands: ToolCommandRecord[];
+  shellCommandsObserved: number;
   runs: RunRecord[];
   modelMix: ModelMixEntry[];
 }
@@ -38,6 +39,7 @@ export interface BuildScorecardInput {
 const CHECK_KIND_ORDER: CheckKind[] = ["compile", "lint", "typecheck", "test", "mutation", "build"];
 const LOW_FIRST_PASS_THRESHOLD = 0.5;
 const LOW_FIRST_PASS_MIN_RUNS = 3;
+const MAX_WAIT_SHARE = 1;
 
 function isFailure(command: ToolCommandRecord): boolean {
   return command.exitCode !== null && command.exitCode !== 0;
@@ -134,18 +136,29 @@ function computeAgentWaitShare(commands: ToolCommandRecord[], runs: RunRecord[])
     .filter((duration): duration is number => duration !== null);
   if (measuredDurations.length === 0) return null;
 
-  return measuredDurations.reduce((total, duration) => total + duration, 0) / totalRuntimeMs;
+  const waitShare = measuredDurations.reduce((total, duration) => total + duration, 0) / totalRuntimeMs;
+  return Math.min(MAX_WAIT_SHARE, waitShare);
+}
+
+function checkPresenceFinding(input: BuildScorecardInput): MaturityFinding | null {
+  if (input.shellCommandsObserved === 0) {
+    return input.runs.length === 0
+      ? null
+      : { code: "no_shell_events", message: "No shell commands were recorded for this task, so check timing is unavailable." };
+  }
+  return input.commands.length === 0
+    ? { code: "no_checks_ran", message: "No compile, lint, typecheck, test, mutation or build checks ran for this task." }
+    : null;
 }
 
 function buildFindings(
-  commands: ToolCommandRecord[],
+  input: BuildScorecardInput,
   environmentBlockedCount: number,
   kindStats: Array<CheckKindStats & { firstPassSample: number }>,
 ): MaturityFinding[] {
-  const findings: MaturityFinding[] = [];
-  if (commands.length === 0) {
-    findings.push({ code: "no_checks_ran", message: "No compile, lint, test or build checks ran for this task." });
-  }
+  const { commands } = input;
+  const presence = checkPresenceFinding(input);
+  const findings: MaturityFinding[] = presence ? [presence] : [];
   if (commands.some((command) => command.durationMs !== null && command.durationMs > FAST_CHECK_BUDGET_MS)) {
     findings.push({
       code: "slow_check",
@@ -195,6 +208,6 @@ export function buildScorecard(input: BuildScorecardInput): IssueMaturityScoreca
     agentWaitShare: computeAgentWaitShare(commands, runs),
     byKind: kindStats.map(({ firstPassSample: _firstPassSample, ...stats }) => stats),
     modelMix: input.modelMix,
-    findings: buildFindings(commands, environmentBlockedCount, kindStats),
+    findings: buildFindings(input, environmentBlockedCount, kindStats),
   };
 }

@@ -2,7 +2,12 @@ export type CheckKind = "compile" | "lint" | "typecheck" | "test" | "mutation" |
 
 export const FAST_CHECK_BUDGET_MS = 60_000;
 
-export type MaturityFindingCode = "no_checks_ran" | "slow_check" | "environment_blocked" | "low_first_pass";
+export type MaturityFindingCode =
+  | "no_checks_ran"
+  | "no_shell_events"
+  | "slow_check"
+  | "environment_blocked"
+  | "low_first_pass";
 
 export interface MaturityFinding {
   code: MaturityFindingCode;

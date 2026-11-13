@@ -1,4 +1,4 @@
-import type { CheckKindStats, IssueMaturityScorecard, ModelMixEntry } from "@paperclipai/shared";
+import type { CheckKindStats, IssueMaturityScorecard, MaturityFindingCode, ModelMixEntry } from "@paperclipai/shared";
 import { formatCents, formatDurationMs } from "./utils";
 
 function count(value: number, noun: string): string {
@@ -28,8 +28,10 @@ function describeModel(entry: ModelMixEntry): string {
   return `${entry.model}: ${formatCents(entry.costCents)}`;
 }
 
+const CHECKLESS_FINDING_CODES: ReadonlySet<MaturityFindingCode> = new Set(["no_checks_ran", "no_shell_events"]);
+
 export function formatMaturityScorecardLines(scorecard: IssueMaturityScorecard): string[] {
-  const noChecksRan = scorecard.findings.some((finding) => finding.code === "no_checks_ran");
+  const noChecksRan = scorecard.findings.some((finding) => CHECKLESS_FINDING_CODES.has(finding.code));
   const modelsByCost = [...scorecard.modelMix].sort((a, b) => b.costCents - a.costCents);
   const lines = [
     ...scorecard.findings.map((finding) => finding.message),
