@@ -3313,6 +3313,19 @@ export function buildAgentIdentityEnv(identity?: AgentRuntimeIdentity): Record<s
   } : {};
 }
 
+export function defaultAgentTestWorkerCount(cpuCount: number): number {
+  return Math.max(1, Math.floor(cpuCount / 4));
+}
+
+function agentTestWorkerEnv(): Record<string, string> {
+  if (process.env.VITEST_MAX_WORKERS) return {};
+  const operatorChoice = process.env.PAPERCLIP_AGENT_TEST_WORKERS?.trim();
+  return {
+    VITEST_MAX_WORKERS:
+      operatorChoice || String(defaultAgentTestWorkerCount(os.availableParallelism())),
+  };
+}
+
 export function buildPaperclipEnv(agent: {
   id: string;
   companyId: string;
@@ -3328,6 +3341,7 @@ export function buildPaperclipEnv(agent: {
     PAPERCLIP_AGENT_ID: agent.id,
     PAPERCLIP_COMPANY_ID: agent.companyId,
     ...buildAgentIdentityEnv(identity),
+    ...agentTestWorkerEnv(),
   };
   const runtimeHost = resolveHostForUrl(
     process.env.PAPERCLIP_LISTEN_HOST ?? process.env.HOST ?? "localhost",
