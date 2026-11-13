@@ -164,6 +164,7 @@ import {
 } from "./routes/chat-channels.js";
 import { smokeLabRoutes } from "./routes/smoke-lab.js";
 import { costRoutes } from "./routes/costs.js";
+import { maturityRoutes } from "./routes/maturity.js";
 import { agentCommentaryRoutes } from "./routes/agent-commentary.js";
 import { agentChatMessageRoutes } from "./routes/agent-chat-messages.js";
 import { activityRoutes } from "./routes/activity.js";
@@ -918,6 +919,7 @@ export async function createApp(
     process.env.PAPERCLIP_TOOL_RUNTIME_TRUSTED_HOST ??
     null;
   api.use(costRoutes(db, { pluginWorkerManager: workerManager }));
+  api.use(maturityRoutes(db));
   api.use(activityRoutes(db));
   api.use(dashboardRoutes(db));
   api.use(attentionRoutes(db, {
