@@ -1,0 +1,17 @@
+description: "Paperclip agent learning loop decision evals"
+
+prompts:
+  - file://prompts/learning-loop-system.txt
+
+providers:
+  - id: openrouter:anthropic/claude-sonnet-4-20250514
+    label: claude-sonnet-4
+  - id: openrouter:openai/gpt-4.1
+    label: gpt-4.1
+  - id: openrouter:openai/codex-5.4
+    label: codex-5.4
+  - id: openrouter:google/gemini-2.5-pro
+    label: gemini-2.5-pro
+
+tests:
+  - file://learning/agent-learning.yaml

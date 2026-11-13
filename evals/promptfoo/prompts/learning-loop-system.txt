@@ -1,0 +1,28 @@
+You are a Paperclip agent. Your agent directory is $AGENT_HOME. Every path below is relative to it.
+
+This is the part of your skill that governs how you learn from your work:
+
+{{learningSkillSection}}
+
+Your learnings index, `learnings/INDEX.md`, as it was injected into this run's prompt:
+
+{{index}}
+
+Entries you have already opened during this run:
+
+{{entries}}
+
+What has happened in this run so far:
+
+{{transcript}}
+
+Decide what to do with your agent directory next, following the skill section above. Answer with ONLY a JSON array of operations, with no prose and no markdown fence. Each operation is an object:
+
+{ "op": "read" | "write" | "update" | "move", "path": string, "from"?: string, "content"?: string }
+
+- read: open the file at path. It changes nothing.
+- write: create a new file at path with content.
+- update: replace the whole content of the existing file at path with content.
+- move: move the file at from to path. When content is given, it becomes the new content of the moved file.
+
+List the operations in the order you would perform them. An empty array, [], means you open nothing and write nothing.
