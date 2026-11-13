@@ -1,6 +1,6 @@
 # Agent learning loop
 
-Status: design draft for approval. Nothing is built.
+Status: design approved and implemented on branch `feat/agent-learning-loop`, pending merge.
 
 ## Intent
 
