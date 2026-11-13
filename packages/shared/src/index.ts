@@ -275,6 +275,7 @@ export type {
   DecisionTrainingSourceKind,
 } from "./types/decision-training.js";
 export { DECISION_TRAINING_RETENTION_POLICY } from "./types/decision-training.js";
+export { FAST_CHECK_BUDGET_MS } from "./types/maturity.js";
 
 export {
   analyzeFrontmatterBlock,
@@ -1404,6 +1405,11 @@ export type {
   IssueCostSummary,
   IssueCostSummaryAgent,
   CheckKind,
+  MaturityFindingCode,
+  MaturityFinding,
+  CheckKindStats,
+  ModelMixEntry,
+  IssueMaturityScorecard,
   CostByAgent,
   CostByUser,
   CostByUserReport,
