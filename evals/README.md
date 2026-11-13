@@ -41,7 +41,8 @@ npx promptfoo@0.103.3 eval -c promptfooconfig.yaml \
   --no-progress-bar \
   --no-write
 
-# Agent learning loop decision cases (own config, own prompt)
+# Agent learning loop decision cases (own config, own prompt).
+# Needs a provider key, the same as evals:smoke.
 pnpm evals:learning
 
 # View results in browser
@@ -77,6 +78,11 @@ Phase 0 covers narrow behavior evals for the Paperclip heartbeat skill:
 | Memory provenance audit | `phase5_memory` | Agent preserves inspectable source and operation records |
 | Memory hook cost/trust | `phase5_memory` | Agent keeps memory hook cost attribution and source trust visible |
 | Board command work objects | `phase5_control_surface` | Chat-like board commands create auditable work objects |
+| Learning apply | `agent_learning` | Agent opens only the learning that applies to the task and writes nothing |
+| Learning capture | `agent_learning` | Agent writes one evidenced learning after a changes-requested wake and lists it in the regenerated index |
+| Learning unlearn | `agent_learning` | Agent retires a contradicted learning to a tombstone, writes the replacement, and drops it from the index |
+| Learning quiet success | `agent_learning` | Agent writes nothing after a routine success |
+| Learning boundary | `agent_learning` | Agent keeps changes inside `learnings/` and `playbooks/` and never edits `AGENTS.md` |
 
 Phase 5 memory/control-surface prompt evals should be paired with deterministic server/shared tests for:
 
