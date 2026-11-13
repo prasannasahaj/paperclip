@@ -633,14 +633,14 @@ Exact response fields are documented in `skills/paperclip/references/api-referen
 
 ## Learning From Your Work (Required)
 
-Keep what your tasks teach you in your agent directory (`$AGENT_HOME`) so later runs do not repeat a mistake. Each run's prompt carries your `learnings/INDEX.md`; open an entry or playbook only when it applies to the task in front of you.
+Keep what your tasks teach you in your agent directory (`$AGENT_HOME`) so later runs do not repeat a mistake. Skip this loop when the run guidance does not name a persistent agent directory (`AGENT_HOME`). Each run's prompt carries your `learnings/INDEX.md`; open an entry or playbook only when it applies to the task in front of you. Learnings record lessons about how to do tasks; PARA memory holds facts about people, projects and companies.
 
-- `learnings/INDEX.md`: one line per active learning, `- [slug](slug.md) · last_confirmed: YYYY-MM-DD · claim`. Regenerate it every time you add, confirm or retire an entry.
+- `learnings/INDEX.md`: one line per active learning, `- [slug](slug.md) · last_confirmed: YYYY-MM-DD · claim`, and one line per playbook, `- [playbook: slug](../playbooks/slug.md) · last_confirmed: YYYY-MM-DD · applies_when`. Keep it sorted by `last_confirmed`, newest first. Regenerate it every time you add, confirm or retire an entry.
 - `learnings/<slug>.md`: one active learning. Frontmatter: `claim`, `kind` (`fact`, `preference` or `pitfall`), `evidence`, `learned_at`, `last_confirmed`, `confirmations`. Body: when it applies and what to do.
 - `learnings/retired/<slug>.md`: a tombstone for a retired learning, keeping the old claim, the reason it was retired, a link to the contradicting evidence, and what replaced it.
-- `playbooks/<slug>.md`: a procedure for a recurring situation, with the same frontmatter plus `applies_when`, and numbered steps in the body.
+- `playbooks/<slug>.md`: a procedure for a recurring situation, with the same frontmatter plus `applies_when`, and numbered steps in the body. Write a playbook when a situation recurs and has a procedure, not for a one-off fact.
 
-**When to reflect.** Before you move an issue to `in_review` or `done`, and whenever you wake on `execution_changes_requested`, ask: did this task involve a surprise, a correction from a reviewer or human, a retry, or a recovered failure? If not, write nothing. A reviewer asking for changes is the strongest evidence you get, so that wake is the main moment to capture a lesson.
+**When to reflect.** Before you move an issue to `in_review` or `done`, and whenever you wake with wake reason `execution_changes_requested`, ask: did this task involve a surprise, a correction from a reviewer or human, a retry, or a recovered failure? If not, write nothing. A reviewer asking for changes is the strongest evidence you get, so that wake is the main moment to capture a lesson.
 
 **Reconcile each lesson against the index, then regenerate `learnings/INDEX.md`:**
 
@@ -652,9 +652,9 @@ Keep what your tasks teach you in your agent directory (`$AGENT_HOME`) so later 
 
 **When a learning no longer holds.** The gate above covers new learnings only. At any point in a task, if you apply a learning and it no longer holds, reconcile that entry immediately with the evidence from the task at hand: retire it, write the replacement if there is one, and regenerate the index.
 
-**Stale entries.** If an entry's `last_confirmed` is more than 90 days before today, do not apply it blindly. Verify it against current evidence first, then confirm it or retire it. Never delete retired entries; a tombstone lets a mistaken retirement be undone by moving the file back.
+**Stale entries.** If an entry's `last_confirmed` is more than 90 days before today, do not apply it blindly. Verify it against current evidence first, then confirm it or retire it. Never delete retired entries; a tombstone lets a mistaken retirement be undone by moving the file back. When the run guidance says the index was truncated, merge overlapping entries and retire entries not confirmed in 90 days, writing a tombstone whose reason is "stale".
 
-**Boundaries.** This loop writes only to `learnings/` and `playbooks/`. Never edit `AGENTS.md`, your profile, or skills as part of it; those change only through the reflection path with a reviewed diff. Never record secrets or personal data; redact before you write.
+**Boundaries.** This loop writes only to `learnings/` and `playbooks/`. Never edit `AGENTS.md`, your profile, or skills as part of it; those change only through a Reflection Coach proposal that the user or board accepts via `request_confirmation`. Never record secrets or personal data; redact before you write.
 
 Example index line, and the frontmatter of its entry:
 
