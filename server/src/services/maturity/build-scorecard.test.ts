@@ -27,24 +27,70 @@ function run(overrides: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
-function scorecard(input: { commands?: ToolCommandRecord[]; runs?: RunRecord[] }) {
+function scorecard(input: { commands?: ToolCommandRecord[]; runs?: RunRecord[]; shellCommandsObserved?: number }) {
+  const commands = input.commands ?? [];
   return buildScorecard({
     issueId: "issue-1",
     includeDescendants: false,
     truncated: false,
-    commands: input.commands ?? [],
+    commands,
+    shellCommandsObserved: input.shellCommandsObserved ?? commands.length,
     runs: input.runs ?? [],
     modelMix: [],
   });
 }
 
 describe("buildScorecard", () => {
-  it("reports no_checks_ran and null rates when there are no commands", () => {
-    const result = scorecard({});
+  it("reports no_checks_ran and null rates when shell commands ran but none was a check", () => {
+    const result = scorecard({ runs: [run()], shellCommandsObserved: 4 });
 
     expect(result.byKind).toEqual([]);
     expect(result.agentWaitShare).toBeNull();
-    expect(result.findings.map((finding) => finding.code)).toEqual(["no_checks_ran"]);
+    expect(result.findings).toEqual([
+      { code: "no_checks_ran", message: "No compile, lint, typecheck, test, mutation or build checks ran for this task." },
+    ]);
+  });
+
+  it("reports no_shell_events instead of no_checks_ran when runs recorded no shell commands", () => {
+    const result = scorecard({ runs: [run()], shellCommandsObserved: 0 });
+
+    expect(result.findings).toEqual([
+      { code: "no_shell_events", message: "No shell commands were recorded for this task, so check timing is unavailable." },
+    ]);
+  });
+
+  it("reports no finding about checks when there are no runs", () => {
+    const result = scorecard({ shellCommandsObserved: 0 });
+
+    expect(result.findings).toEqual([]);
+  });
+
+  it("caps agentWaitShare at 1 when parallel checks outlast the run", () => {
+    const result = scorecard({
+      runs: [run({ startedAtMs: 0, finishedAtMs: 10_000 })],
+      commands: [
+        command({ executionId: "a", startedAtMs: 1, durationMs: 9_000 }),
+        command({ executionId: "b", startedAtMs: 2, durationMs: 9_000 }),
+      ],
+    });
+
+    expect(result.agentWaitShare).toBe(1);
+  });
+
+  it("does not emit low_first_pass at a first-pass rate of exactly 0.5", () => {
+    const runs = [run({ id: "r1" }), run({ id: "r2" }), run({ id: "r3" }), run({ id: "r4" })];
+    const halfPassing = scorecard({
+      runs,
+      commands: [
+        command({ runId: "r1", executionId: "a", exitCode: 1 }),
+        command({ runId: "r2", executionId: "b", exitCode: 1 }),
+        command({ runId: "r3", executionId: "c", exitCode: 0 }),
+        command({ runId: "r4", executionId: "d", exitCode: 0 }),
+      ],
+    });
+
+    expect(halfPassing.byKind[0]?.firstPassRate).toBe(0.5);
+    expect(halfPassing.findings.map((finding) => finding.code)).not.toContain("low_first_pass");
   });
 
   it("computes firstPassRate per kind from the first command of each run and kind", () => {
