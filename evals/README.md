@@ -41,6 +41,9 @@ npx promptfoo@0.103.3 eval -c promptfooconfig.yaml \
   --no-progress-bar \
   --no-write
 
+# Agent learning loop decision cases (own config, own prompt)
+pnpm evals:learning
+
 # View results in browser
 promptfoo view
 ```

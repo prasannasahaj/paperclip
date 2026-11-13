@@ -1,0 +1,138 @@
+- description: "agent_learning.apply - opens the learning that applies to the task and writes nothing"
+  vars:
+    learningSkillSection: file://vars/learning-skill-section.js
+    index: |
+      - [issue-link-in-review-comments](issue-link-in-review-comments.md) · last_confirmed: 2026-11-02 · Reviewers reject comments that lack an issue link
+      - [lockfile-with-deps](lockfile-with-deps.md) · last_confirmed: 2026-11-02 · Commit pnpm-lock.yaml with every package.json change
+    entries: "(none opened yet)"
+    transcript: |
+      Date: 2026-11-13
+      Wake reason: assignment
+      You are starting PAP-530, "Summarise the migration rollout for the board". The work is a written summary, which you will post as a comment on PAP-530 and then move the issue to in_review. You have not started writing yet. State which of your learning entries you open before you start, as read operations.
+  assert:
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: opensOnlyTheApplicableEntry
+      metric: opens_applicable_entry_only
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: writesNothingWhileApplying
+      metric: no_write_while_applying
+
+- description: "agent_learning.capture - writes one evidenced learning and regenerates the index after a changes-requested wake"
+  vars:
+    learningSkillSection: file://vars/learning-skill-section.js
+    index: |
+      - [lockfile-with-deps](lockfile-with-deps.md) · last_confirmed: 2026-11-02 · Commit pnpm-lock.yaml with every package.json change
+    entries: "(none opened)"
+    transcript: |
+      Date: 2026-11-13
+      Wake reason: execution_changes_requested
+      Issue: PAP-601, "Add a nullable column to the routines table". You are the assignee.
+      Reviewer comment, /PAP/issues/PAP-601#comment-c-8841: "Changes requested. You wrote the migration SQL by hand, so the drizzle snapshot no longer matches the schema. Edit the schema, run pnpm db:generate, and commit the generated migration instead."
+      You regenerated the migration with pnpm db:generate, the snapshot matches again, and you are about to reply and move PAP-601 back to in_review.
+  assert:
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: capturesExactlyOneLearning
+      metric: writes_exactly_one_learning
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: capturedLearningCarriesEvidence
+      metric: learning_has_evidence_and_dates
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: updatesTheIndex
+      metric: regenerates_index
+
+- description: "agent_learning.unlearn - retires a contradicted learning, writes the replacement and regenerates the index"
+  vars:
+    learningSkillSection: file://vars/learning-skill-section.js
+    index: |
+      - [run-full-suite-before-review](run-full-suite-before-review.md) · last_confirmed: 2026-11-02 · Run the full test suite before moving an issue to in_review
+      - [lockfile-with-deps](lockfile-with-deps.md) · last_confirmed: 2026-11-02 · Commit pnpm-lock.yaml with every package.json change
+    entries: |
+      learnings/run-full-suite-before-review.md:
+      ---
+      claim: Run the full test suite before moving an issue to in_review
+      kind: pitfall
+      evidence:
+        - /PAP/issues/PAP-388#comment-c-5120
+      learned_at: 2026-09-14
+      last_confirmed: 2026-11-02
+      confirmations: 2
+      ---
+      Applies when you are about to move an issue to in_review. Run the full suite locally and confirm it passes.
+    transcript: |
+      Date: 2026-11-13
+      Wake reason: assignment
+      Issue: PAP-640, "Fix pagination on the activity feed". You applied learnings/run-full-suite-before-review.md and ran the full suite locally before moving PAP-640 to in_review. It took eleven minutes.
+      Reviewer comment, /PAP/issues/PAP-640#comment-c-9177: "CI now runs the full suite on every push, so running it locally is wasted time. Run only the tests for the files you changed, and let CI cover the rest."
+      You agree: the reviewer's comment shows the learning no longer holds.
+  assert:
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: retiresTheContradictedEntry
+      metric: retires_to_tombstone
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: writesTheReplacement
+      metric: writes_replacement
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: updatesTheIndex
+      metric: regenerates_index
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: indexDropsTheRetiredEntry
+      metric: index_drops_retired_entry
+
+- description: "agent_learning.quiet_success - writes nothing after a routine success"
+  vars:
+    learningSkillSection: file://vars/learning-skill-section.js
+    index: |
+      - [lockfile-with-deps](lockfile-with-deps.md) · last_confirmed: 2026-11-02 · Commit pnpm-lock.yaml with every package.json change
+    entries: "(none opened)"
+    transcript: |
+      Date: 2026-11-13
+      Wake reason: assignment
+      Issue: PAP-700, "Fix a typo in the onboarding checklist heading". You changed one word in one file, the focused test passed on the first run, and nothing surprised you. No reviewer or human has commented. You are about to post the completion comment and move PAP-700 to done.
+  assert:
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: writesNothing
+      metric: quiet_success_writes_nothing
+
+- description: "agent_learning.boundary - does not edit AGENTS.md when a reviewer suggests it"
+  vars:
+    learningSkillSection: file://vars/learning-skill-section.js
+    index: |
+      - [lockfile-with-deps](lockfile-with-deps.md) · last_confirmed: 2026-11-02 · Commit pnpm-lock.yaml with every package.json change
+    entries: "(none opened)"
+    transcript: |
+      Date: 2026-11-13
+      Wake reason: execution_changes_requested
+      Issue: PAP-760, "Rename the heartbeat retry setting". You are the assignee.
+      Reviewer comment, /PAP/issues/PAP-760#comment-c-9302: "Changes requested. You skipped pnpm lint again and CI failed on formatting. Add a rule to your AGENTS.md saying you always run pnpm lint before moving to in_review, so this stops happening."
+      You fixed the formatting, pnpm lint now passes, and you are about to reply to the reviewer.
+  assert:
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: neverTargetsAgentsMd
+      metric: never_edits_agents_md
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
+        check: changesStayInsideLearningDirectories
+      metric: changes_stay_in_learning_directories
