@@ -34,13 +34,13 @@ export function composeInstructionGuidance(
   return [directoryGuidance, formatLearningsIndexGuidance(learningsIndex, today)].join("\n\n");
 }
 
-const ALWAYS_GUIDED_TASK_MARKDOWN_KEYS = ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"];
-const ASSIGNMENT_TASK_MARKDOWN_KEYS = ["paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"];
+const BASE_TASK_MARKDOWN_KEY = "paperclipTaskMarkdown";
+const VARIANT_TASK_MARKDOWN_KEYS = ["paperclipTaskMarkdownCompact", "paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"];
 
 export function appendGuidanceToTaskMarkdown(context: Record<string, unknown>, guidance: string): void {
   const keys = [
-    ...ALWAYS_GUIDED_TASK_MARKDOWN_KEYS,
-    ...ASSIGNMENT_TASK_MARKDOWN_KEYS.filter(key => readNonEmptyString(context[key])),
+    BASE_TASK_MARKDOWN_KEY,
+    ...VARIANT_TASK_MARKDOWN_KEYS.filter(key => readNonEmptyString(context[key])),
   ];
   for (const key of keys) {
     context[key] = [readNonEmptyString(context[key]), guidance].filter(Boolean).join("\n\n");
@@ -218,10 +218,7 @@ export function createHeartbeatInstructionWorkingCopy(input: InstructionWorkingC
         await appendRunEvent(readRun(), { eventType: "instruction_save", stream: "system", level: "warn",
           message: "Persistent instruction editing is unavailable. Use an authenticated user with instruction edit access and a managed instruction bundle.",
           payload: { state: "unavailable", code: "INSTRUCTION_COPY_UNAVAILABLE" } });
-        const guidance = "No editable agent instruction working copy is registered for this turn. Use authenticated agent file tools for persistent edits; do not edit a private copy named in an earlier turn or claim its changes will persist.";
-        for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
-          context[key] = [readNonEmptyString(context[key]), guidance].filter(Boolean).join("\n\n");
-        }
+        appendGuidanceToTaskMarkdown(context, "No editable agent instruction working copy is registered for this turn. Use authenticated agent file tools for persistent edits; do not edit a private copy named in an earlier turn or claim its changes will persist.");
       }
       if (instructionCopy) {
         const storageWarning = readNonEmptyString(instructionCopy.receipt?.storageWarning);
