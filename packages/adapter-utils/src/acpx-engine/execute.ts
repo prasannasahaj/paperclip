@@ -840,7 +840,7 @@ async function attachPlaywrightBrowserServer(input: {
   stateDir: string;
   runId: string;
   env: Record<string, string>;
-  mcpServers: NonNullable<AcpRuntimeOptions["mcpServers"]>;
+  mcpServers: Extract<NonNullable<AcpRuntimeOptions["mcpServers"]>, unknown[]>;
   onLog: AdapterExecutionContext["onLog"];
 }): Promise<void> {
   const browser = readPlaywrightBrowserConfig(input.config);
