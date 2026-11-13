@@ -29,7 +29,7 @@ export async function readUpToBytes(source: ByteReadable, maxBytes: number): Pro
 }
 
 async function readCappedBytes(filePath: string): Promise<Buffer | null> {
-  const handle = await fs.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const handle = await fs.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     if (!(await handle.stat()).isFile()) return null;
     return await readUpToBytes(handle, LEARNINGS_INDEX_MAX_BYTES + 1);
