@@ -3,6 +3,7 @@ import { posix } from "node:path";
 const FENCE_PATTERN = /^```[a-z]*\s*\n([\s\S]*?)\n```\s*$/i;
 const KNOWN_OPS = ["read", "write", "update", "move"];
 const RETIRED_ENTRY_SLUG = "run-full-suite-before-review";
+const UNTOUCHED_ENTRY_SLUG = "lockfile-with-deps";
 const CAPTURE_EVIDENCE_LINK = "/PAP/issues/PAP-601#comment-c-8841";
 const CONTRADICTING_EVIDENCE_LINK = "/PAP/issues/PAP-640#comment-c-9177";
 const REASON_PATTERN = /reason|because|no longer holds|superseded/i;
@@ -83,6 +84,13 @@ const newEntryWrites = (operations) =>
 const summarize = (operations) =>
   JSON.stringify(operations.map(({ op, path, from }) => ({ op, path, from })));
 
+const slugOf = (path) => posix.basename(path, ".md");
+const escapeForPattern = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const listsSlug = (content, slug) =>
+  new RegExp(`(^|[^a-z0-9-])${escapeForPattern(slug)}([^a-z0-9-]|$)`, "i").test(content);
+const indexUpdates = (operations) =>
+  withOp(operations, "update").filter((operation) => isIndexPath(pathOf(operation)));
+
 function missingNames(requirements) {
   const missing = requirements.filter(([, present]) => !present).map(([name]) => name);
   return missing.length === 0 ? "nothing" : missing.join(", ");
@@ -129,10 +137,19 @@ function capturedLearningCarriesEvidence(output) {
 
 function updatesTheIndex(output) {
   return check(output, (operations) => {
-    const updates = withOp(operations, "update").filter((operation) =>
-      isIndexPath(pathOf(operation)),
-    );
-    return { pass: updates.length === 1, reason: `index updates: ${updates.length}` };
+    const updates = indexUpdates(operations);
+    if (updates.length !== 1) {
+      return { pass: false, reason: `index updates: ${updates.length}` };
+    }
+    const newSlugs = newEntryWrites(operations).map((operation) => slugOf(pathOf(operation)));
+    if (newSlugs.length === 0) {
+      return { pass: false, reason: "no new entry for the regenerated index to list" };
+    }
+    const unlisted = newSlugs.filter((slug) => !listsSlug(contentOf(updates[0]), slug));
+    return {
+      pass: unlisted.length === 0,
+      reason: `new entries missing from the regenerated index: ${unlisted.length === 0 ? "nothing" : unlisted.join(", ")}`,
+    };
   });
 }
 
@@ -186,15 +203,18 @@ function writesTheReplacement(output) {
 
 function indexDropsTheRetiredEntry(output) {
   return check(output, (operations) => {
-    const [update] = withOp(operations, "update").filter((operation) =>
-      isIndexPath(pathOf(operation)),
-    );
+    const [update] = indexUpdates(operations);
     if (!update) {
       return { pass: false, reason: "no update of learnings/INDEX.md" };
     }
+    const content = contentOf(update);
+    const requirements = [
+      ["untouched entry kept", listsSlug(content, UNTOUCHED_ENTRY_SLUG)],
+      ["retired entry dropped", !listsSlug(content, RETIRED_ENTRY_SLUG)],
+    ];
     return {
-      pass: !contentOf(update).includes(RETIRED_ENTRY_SLUG),
-      reason: "the regenerated index must not list the retired entry",
+      pass: requirements.every(([, present]) => present),
+      reason: `regenerated index fails: ${missingNames(requirements)}`,
     };
   });
 }

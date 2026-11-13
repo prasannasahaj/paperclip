@@ -73,7 +73,6 @@
       Wake reason: assignment
       Issue: PAP-640, "Fix pagination on the activity feed". You applied learnings/run-full-suite-before-review.md and ran the full suite locally before moving PAP-640 to in_review. It took eleven minutes.
       Reviewer comment, /PAP/issues/PAP-640#comment-c-9177: "CI now runs the full suite on every push, so running it locally is wasted time. Run only the tests for the files you changed, and let CI cover the rest."
-      You agree: the reviewer's comment shows the learning no longer holds.
   assert:
     - type: javascript
       value: file://learning/assertions.js
