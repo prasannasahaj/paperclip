@@ -156,6 +156,63 @@ export async function createCostEventInTransaction(db: Db, companyId: string, da
   return { ...event, costCentsExact: values.costCents };
 }
 
+export function issueTreeMembershipCondition(companyId: string, issueId: string, excludeRoot: boolean) {
+  const childIssues = alias(issues, "child");
+
+  // The seed of the recursive CTE: when excludeRoot is true, start from
+  // the direct children so the root issue itself is not counted.
+  const cteSeed = excludeRoot
+    ? sql`
+        SELECT ${issues.id}
+        FROM ${issues}
+        WHERE ${issues.companyId} = ${companyId}
+          AND ${issues.parentId} = ${issueId}
+          AND ${issues.hiddenAt} IS NULL
+          AND ${issues.harnessKind} IS NULL
+      `
+    : sql`
+        SELECT ${issues.id}
+        FROM ${issues}
+        WHERE ${issues.companyId} = ${companyId}
+          AND ${issues.id} = ${issueId}
+          AND ${issues.hiddenAt} IS NULL
+          AND ${issues.harnessKind} IS NULL
+      `;
+
+  return sql<boolean>`
+    ${issues.id} IN (
+      WITH RECURSIVE issue_tree(id) AS (
+        ${cteSeed}
+        UNION ALL
+        SELECT ${childIssues.id}
+        FROM ${issues} ${childIssues}
+        JOIN issue_tree ON ${childIssues.parentId} = issue_tree.id
+        WHERE ${childIssues.companyId} = ${companyId}
+          AND ${childIssues.hiddenAt} IS NULL
+          AND ${childIssues.harnessKind} IS NULL
+      )
+      SELECT id FROM issue_tree
+    )
+  `;
+}
+
+export async function issueTreeIssueIds(
+  db: Db,
+  companyId: string,
+  issueId: string,
+  options: { excludeRoot?: boolean } = {},
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: issues.id })
+    .from(issues)
+    .where(and(
+      eq(issues.companyId, companyId),
+      visibleIssueCondition(),
+      issueTreeMembershipCondition(companyId, issueId, options.excludeRoot === true),
+    ));
+  return rows.map((row) => row.id);
+}
+
 export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
   return {
     createEvent: async (companyId: string, data: Omit<typeof costEvents.$inferInsert, "companyId" | "receiptHash" | "costCents"> & { costCents: MoneyInput }, actor?: Pick<LogActivityInput, "actorType" | "actorId" | "agentId">) => {
@@ -226,26 +283,6 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
       // The route does that so zero counts are not mistaken for a missing root.
       const childIssues = alias(issues, "child");
 
-      // The seed of the recursive CTE: when excludeRoot is true, start from
-      // the direct children so the root issue itself is not counted.
-      const cteSeed = options.excludeRoot
-        ? sql`
-            SELECT ${issues.id}
-            FROM ${issues}
-            WHERE ${issues.companyId} = ${companyId}
-              AND ${issues.parentId} = ${issueId}
-              AND ${issues.hiddenAt} IS NULL
-              AND ${issues.harnessKind} IS NULL
-          `
-        : sql`
-            SELECT ${issues.id}
-            FROM ${issues}
-            WHERE ${issues.companyId} = ${companyId}
-              AND ${issues.id} = ${issueId}
-              AND ${issues.hiddenAt} IS NULL
-              AND ${issues.harnessKind} IS NULL
-          `;
-
       const cteSeedText = options.excludeRoot
         ? sql`
             SELECT (${issues.id})::text AS id
@@ -264,21 +301,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
               AND ${issues.harnessKind} IS NULL
           `;
 
-      const issueTreeCondition = sql<boolean>`
-        ${issues.id} IN (
-          WITH RECURSIVE issue_tree(id) AS (
-            ${cteSeed}
-            UNION ALL
-            SELECT ${childIssues.id}
-            FROM ${issues} ${childIssues}
-            JOIN issue_tree ON ${childIssues.parentId} = issue_tree.id
-            WHERE ${childIssues.companyId} = ${companyId}
-              AND ${childIssues.hiddenAt} IS NULL
-              AND ${childIssues.harnessKind} IS NULL
-          )
-          SELECT id FROM issue_tree
-        )
-      `;
+      const issueTreeCondition = issueTreeMembershipCondition(companyId, issueId, options.excludeRoot === true);
 
       const runSummarySql = sql`
         WITH RECURSIVE issue_tree(id) AS (

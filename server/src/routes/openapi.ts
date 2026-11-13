@@ -11061,6 +11061,13 @@ registerCurrentRoute({
 });
 
 registerCurrentRoute({
+  method: "get",
+  path: "/api/issues/{id}/maturity-scorecard",
+  tags: ["costs"],
+  summary: "Get issue maturity scorecard",
+});
+
+registerCurrentRoute({
   method: "put",
   path: "/api/companies/{companyId}/resource-memberships/me/documents/{documentId}",
   tags: ["resource-memberships"],

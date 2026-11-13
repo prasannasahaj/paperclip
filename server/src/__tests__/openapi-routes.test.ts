@@ -56,6 +56,7 @@ const apiPrefixes: Record<string, string> = {
   "connection-event-wake.ts": "/",
   "ephemeral-enrollment.ts": "/api",
   "costs.ts": "/api",
+  "maturity.ts": "/api",
   "dashboard.ts": "/api",
   "dot-runner.ts": "/api",
   "muse.ts": "/api",
