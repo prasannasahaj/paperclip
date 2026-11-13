@@ -42,7 +42,7 @@ const subscriptionApiEquivalentCents = sql<number>`coalesce(sum(case
       + ${costEvents.outputTokens} * ${apiEquivalentRate("output")}) / 10000.0
   else 0 end), 0)::double precision`;
 
-const displayedCostCents = sql<number>`(coalesce(sum(${costEvents.costCents}), 0) + ${subscriptionApiEquivalentCents})::double precision`;
+export const displayedCostCents = sql<number>`(coalesce(sum(${costEvents.costCents}), 0) + ${subscriptionApiEquivalentCents})::double precision`;
 
 function sumAsNumber(column: typeof costEvents.costCents | typeof costEvents.inputTokens | typeof costEvents.cachedInputTokens | typeof costEvents.outputTokens | ReturnType<typeof sql>) {
   return sql<number>`coalesce(sum(${column}), 0)::double precision`;

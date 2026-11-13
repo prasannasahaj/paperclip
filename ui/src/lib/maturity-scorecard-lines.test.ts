@@ -91,6 +91,14 @@ describe("formatMaturityScorecardLines", () => {
     expect(lines).toEqual(["no checks ran"]);
   });
 
+  it("prints the no_shell_events message and no per-kind lines", () => {
+    const message = "No shell commands were recorded for this task, so check timing is unavailable.";
+    const lines = formatMaturityScorecardLines(
+      scorecard({ findings: [{ code: "no_shell_events", message }], byKind: [testKind] }),
+    );
+    expect(lines).toEqual([message]);
+  });
+
   it("lists model mix as model and cost, largest first", () => {
     const lines = formatMaturityScorecardLines(
       scorecard({
