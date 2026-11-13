@@ -136,6 +136,50 @@ describe("buildScorecard", () => {
     expect(withoutRuntime.agentWaitShare).toBeNull();
   });
 
+  it("agentWaitShare is null when runs exist but no commands ran", () => {
+    const result = scorecard({ runs: [run({ startedAtMs: 0, finishedAtMs: 100_000 })] });
+
+    expect(result.agentWaitShare).toBeNull();
+  });
+
+  it("agentWaitShare ignores commands from runs without both timestamps", () => {
+    const result = scorecard({
+      runs: [
+        run({ id: "timed", startedAtMs: 0, finishedAtMs: 100_000 }),
+        run({ id: "untimed", startedAtMs: 0, finishedAtMs: null }),
+      ],
+      commands: [
+        command({ runId: "timed", executionId: "a", startedAtMs: 1, durationMs: 10_000 }),
+        command({ runId: "untimed", executionId: "b", startedAtMs: 2, durationMs: 50_000 }),
+        command({ runId: "unknown", executionId: "c", startedAtMs: 3, durationMs: 50_000 }),
+      ],
+    });
+
+    expect(result.agentWaitShare).toBe(0.1);
+  });
+
+  it("agentWaitShare ignores runs whose finish is not after start", () => {
+    const result = scorecard({
+      runs: [
+        run({ id: "timed", startedAtMs: 0, finishedAtMs: 100_000 }),
+        run({ id: "inverted", startedAtMs: 200_000, finishedAtMs: 100_000 }),
+        run({ id: "instant", startedAtMs: 5_000, finishedAtMs: 5_000 }),
+      ],
+      commands: [
+        command({ runId: "timed", executionId: "a", startedAtMs: 1, durationMs: 20_000 }),
+        command({ runId: "inverted", executionId: "b", startedAtMs: 2, durationMs: 30_000 }),
+        command({ runId: "instant", executionId: "c", startedAtMs: 3, durationMs: 30_000 }),
+      ],
+    });
+    const onlyInvalidRuns = scorecard({
+      runs: [run({ id: "inverted", startedAtMs: 200_000, finishedAtMs: 100_000 })],
+      commands: [command({ runId: "inverted", durationMs: 30_000 })],
+    });
+
+    expect(result.agentWaitShare).toBe(0.2);
+    expect(onlyInvalidRuns.agentWaitShare).toBeNull();
+  });
+
   it("emits slow_check when any check exceeds FAST_CHECK_BUDGET_MS", () => {
     const slow = scorecard({
       runs: [run()],
