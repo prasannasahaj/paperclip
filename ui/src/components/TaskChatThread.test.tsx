@@ -13,6 +13,7 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ConnectivityProvider, createConnectivityStore } from "@/lib/connectivity";
+import { queryKeys } from "@/lib/queryKeys";
 import { INITIAL_TRANSCRIPT_REVEAL_BUDGET_MS, TaskChatThread } from "./TaskChatThread";
 import { IssueChatThread } from "./IssueChatThread";
 import type {
@@ -1677,6 +1678,34 @@ describe("TaskChatThread runtime transcript selection", () => {
     });
     const statusLine = container.querySelector('[data-testid="task-chat-status-line"]');
     expect(statusLine?.textContent).toMatch(/^Running/);
+  });
+
+  it("shows the task statusline session facts while no run is active", () => {
+    queryClient.setQueryData(queryKeys.issues.contextUsage("issue", "agent-1"), {
+      runId: "run-1", agentId: "agent-1", sessionId: null,
+      usedTokens: 380_000, windowTokens: 1_000_000,
+      observedAt: new Date().toISOString(), totals: null, costUsd: 0.42, compactions: 0,
+    });
+    const comment = {
+      id: "idle-status-line-message", companyId: "company", issueId: "issue",
+      authorType: "user" as const, authorUserId: "board", authorAgentId: null,
+      body: "Check the sandbox configuration.",
+      presentation: null, metadata: null,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    renderThread({
+      issueId: "issue",
+      comments: [comment], onAdd: async () => {}, issueStatus: "in_progress",
+      currentUserId: "board", issueAssigneeAgentId: "agent-1",
+      agentMap: new Map([["agent-1", {
+        id: "agent-1", name: "Runner", adapterType: "claude_local", icon: "code",
+        adapterConfig: { model: "claude-sonnet-5-5" },
+      } as unknown as Agent]]),
+    });
+    const statusLine = container.querySelector('[data-testid="task-chat-status-line"]');
+    expect(statusLine?.textContent).toContain("sonnet 5.5");
+    expect(statusLine?.textContent).toContain("ctx 62%");
+    expect(statusLine?.textContent).toContain("$0.42");
   });
 
   it.each([false, true])("keeps the runner identity and activity mounted through startup (mobile=%s)", async (mobile) => {

@@ -5,12 +5,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskChatItem, TaskChatToolItem } from "./task-chat-model";
 import { TaskChatStatusLine } from "./TaskChatStatusLine";
+import type { TaskStatusLineInput } from "./task-status-line";
 
 const START = Date.UTC(2026, 10, 13, 4, 0, 0);
 
 function runningTool(target: string): TaskChatToolItem {
   return { id: "t1", kind: "tool", name: "Bash", status: "in_progress", target };
 }
+
+type SessionFacts = Pick<TaskStatusLineInput, "model" | "context" | "lastReplyAtMs" | "rateLimit" | "costUsd">;
 
 describe("TaskChatStatusLine", () => {
   let container: HTMLDivElement;
@@ -30,18 +33,14 @@ describe("TaskChatStatusLine", () => {
     vi.useRealTimers();
   });
 
-  const render = (props: {
-    runState: string;
-    items?: TaskChatItem[];
-    usageJson?: Record<string, unknown> | null;
-  }) => {
+  const render = (props: { runState: string; items?: TaskChatItem[]; facts?: SessionFacts }) => {
     act(() => {
       root.render(
         <TaskChatStatusLine
           runState={props.runState}
           items={props.items ?? []}
           startedAtMs={START}
-          usageJson={props.usageJson}
+          facts={props.facts ?? {}}
         />,
       );
     });
@@ -49,22 +48,38 @@ describe("TaskChatStatusLine", () => {
 
   const line = () => container.querySelector('[data-testid="task-chat-status-line"]');
 
-  it("joins state, current activity and elapsed time with separators", () => {
-    render({ runState: "running", items: [runningTool("git push origin fix")] });
-    expect(line()?.textContent).toBe("Running · Bash git push origin fix · 5s");
+  it("joins the live segments and session facts with separators", () => {
+    render({
+      runState: "running",
+      items: [runningTool("git push origin fix")],
+      facts: { model: "claude-sonnet-5-5" },
+    });
+    expect(line()?.textContent).toBe("Running │ Bash git push origin fix │ sonnet 5.5 │ 5s");
   });
 
-  it("advances the elapsed time every second", () => {
+  it("advances the elapsed time every second while running", () => {
     render({ runState: "running" });
     act(() => {
       vi.advanceTimersByTime(3_000);
     });
-    expect(line()?.textContent).toBe("Running · 8s");
+    expect(line()?.textContent).toBe("Running │ 8s");
   });
 
-  it("renders nothing for a finished run", () => {
+  it("renders nothing for a finished run with no session facts", () => {
     render({ runState: "succeeded" });
     expect(line()).toBeNull();
+  });
+
+  it("keeps showing session facts after the run finished", () => {
+    render({ runState: "succeeded", facts: { model: "claude-sonnet-5-5", costUsd: 0.42 } });
+    expect(line()?.textContent).toBe("sonnet 5.5 │ $0.42");
+  });
+
+  it("marks a nearly full context window in the alert tone", () => {
+    render({ runState: "succeeded", facts: { context: { usedTokens: 900, windowTokens: 1000 } } });
+    const context = container.querySelector('[data-segment="context"]');
+    expect(context?.textContent).toBe("ctx 10% COMPACT");
+    expect(context?.className).toContain("text-destructive");
   });
 
   it("stops ticking after it unmounts", () => {
