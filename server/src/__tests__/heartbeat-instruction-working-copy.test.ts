@@ -69,10 +69,25 @@ describe("appendGuidanceToTaskMarkdown", () => {
     for (const key of Object.keys(context)) expect(String(context[key]).endsWith(`\n\n${guidance}`)).toBe(true);
   });
 
-  it("does not create assignment keys that are absent", () => {
+  it("does not create compact or assignment keys that are absent", () => {
     const context: Record<string, unknown> = { paperclipTaskMarkdown: "Task" };
     appendGuidanceToTaskMarkdown(context, guidance);
-    expect(context).toEqual({ paperclipTaskMarkdown: `Task\n\n${guidance}`, paperclipTaskMarkdownCompact: guidance });
+    expect(context).toEqual({ paperclipTaskMarkdown: `Task\n\n${guidance}` });
+  });
+
+  it("leaves a compact key that task context removed absent, so a resumed turn falls back to the full brief", () => {
+    const context: Record<string, unknown> = { paperclipTaskMarkdown: "Task", paperclipTaskMarkdownAssignment: "Assignment" };
+    appendGuidanceToTaskMarkdown(context, guidance);
+    expect(context).toEqual({
+      paperclipTaskMarkdown: `Task\n\n${guidance}`,
+      paperclipTaskMarkdownAssignment: `Assignment\n\n${guidance}`,
+    });
+  });
+
+  it("creates the base key for a run without a task brief", () => {
+    const context: Record<string, unknown> = {};
+    appendGuidanceToTaskMarkdown(context, guidance);
+    expect(context).toEqual({ paperclipTaskMarkdown: guidance });
   });
 });
 
@@ -179,13 +194,11 @@ describePostgres("heartbeat instruction working-copy lifecycle", () => {
     await seedLearningsIndex(f.root, `${learningsIndexLine}\n`);
     const { finished, input } = await execute(f);
     expect(finished.status, finished.error ?? undefined).toBe("succeeded");
-    for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
-      expect(input.context[key]).toContain(learningsIndexLine);
-      expect(input.context[key]).toContain("learnings/INDEX.md");
-      expect(input.context[key]).toContain("Your persistent agent directory is");
-    }
+    expect(input.context.paperclipTaskMarkdown).toContain(learningsIndexLine);
+    expect(input.context.paperclipTaskMarkdown).toContain("learnings/INDEX.md");
+    expect(input.context.paperclipTaskMarkdown).toContain("Your persistent agent directory is");
     expect(input.context.paperclipTaskMarkdownAssignment).toBeDefined();
-    for (const key of ["paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"]) {
+    for (const key of ["paperclipTaskMarkdownCompact", "paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"]) {
       if (input.context[key] === undefined) continue;
       expect(input.context[key]).toContain(learningsIndexLine);
       expect(input.context[key]).toContain("Your persistent agent directory is");
@@ -197,7 +210,7 @@ describePostgres("heartbeat instruction working-copy lifecycle", () => {
     const { finished, input } = await execute(f);
     expect(finished.status, finished.error ?? undefined).toBe("succeeded");
     for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
-      expect(input.context[key]).not.toContain("learnings/INDEX.md");
+      expect(String(input.context[key] ?? "")).not.toContain("learnings/INDEX.md");
     }
   });
 
@@ -208,6 +221,8 @@ describePostgres("heartbeat instruction working-copy lifecycle", () => {
     expect(finished.status, finished.error ?? undefined).toBe("succeeded");
     expect(input.instructionPath).toBeNull();
     expect(input.context.paperclipTaskMarkdown).toContain("No editable agent instruction working copy is registered");
+    expect(input.context.paperclipTaskMarkdownAssignment).toBeDefined();
+    expect(input.context.paperclipTaskMarkdownAssignment).toContain("No editable agent instruction working copy is registered");
     expect(finished.resultJson?.instructionSave).toBeUndefined();
     expect(events.some(event => event.eventType === "instruction_save" && event.payload?.state === "unavailable")).toBe(true);
     expect(await fs.readFile(path.join(f.root, entryFile), "utf8")).toBe(initial);
