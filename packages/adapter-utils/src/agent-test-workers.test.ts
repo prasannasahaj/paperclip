@@ -43,6 +43,17 @@ describe("buildPaperclipEnv test worker cap", () => {
     expect(buildPaperclipEnv(agent).VITEST_MAX_WORKERS).toBe("2");
   });
 
+  it.each(["abc", "0", "-1", "1.5", ""])(
+    "falls back to the core-count default when PAPERCLIP_AGENT_TEST_WORKERS is %j",
+    (invalidChoice) => {
+      clearWorkerSettings();
+      process.env.PAPERCLIP_AGENT_TEST_WORKERS = invalidChoice;
+      expect(buildPaperclipEnv(agent).VITEST_MAX_WORKERS).toBe(
+        String(defaultAgentTestWorkerCount(os.availableParallelism())),
+      );
+    },
+  );
+
   it("leaves a host-defined VITEST_MAX_WORKERS alone", () => {
     clearWorkerSettings();
     process.env.VITEST_MAX_WORKERS = "9";
