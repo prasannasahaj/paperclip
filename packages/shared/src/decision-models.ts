@@ -4,6 +4,7 @@ import type { AiManagedConnectionSummary } from "./ai-connections.js";
 export const DECISION_MODELS = {
   openai: { id: "gpt-6-luna", name: "GPT-6 Luna" },
   openrouter: { id: "typesafe/jev-1.13", name: "Jev 1.13" },
+  ollama: { id: "d3:9b", name: "D3 9B" },
 } as const;
 export type DecisionProvider = keyof typeof DECISION_MODELS;
 export const updateDecisionModelSchema = z.object({
@@ -65,9 +66,10 @@ export const DECISION_TEST_REQUEST: DecisionRequest = {
 };
 
 /** Native endpoints only; OpenRouter's official routing metadata is compatible. */
-export function decisionProviderForConnection(metadata: { provider: string; method: string; routing?: { kind: string; baseUrl?: string } }): DecisionProvider | null {
+export function decisionProviderForConnection(metadata: { provider: string; method: string; routing?: { kind: string; baseUrl?: string; auth?: string } }): DecisionProvider | null {
   if (metadata.method !== "api_key") return null;
   if (metadata.provider === "openai" && !metadata.routing) return "openai";
+  if (metadata.provider === "openai" && metadata.routing?.kind === "local" && metadata.routing.auth === "none") return "ollama";
   if (metadata.provider === "openrouter" && (!metadata.routing || (metadata.routing.kind === "openrouter" && !metadata.routing.baseUrl))) return "openrouter";
   return null;
 }

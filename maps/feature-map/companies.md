@@ -66,7 +66,8 @@ Automated: [decision settings](../../ui/src/components/decision-models/DecisionM
 component and service contracts with simulated providers.
 
 Manual: As an authorized connection manager, select a disposable shared AI
-connection, save the provider/model and sponsorship options, reload, and run the
+connection (OpenAI, OpenRouter, or a local Ollama endpoint with no authentication
+serving `d3:9b`), save the provider/model and sponsorship options, reload, and run the
 bounded Test action. Inspect success and failure receipts and their history in
 Costs. Verify disabled or revoked connections remain clear and that a user
 without connection-management permission cannot configure or test the service.

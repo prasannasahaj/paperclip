@@ -6,7 +6,7 @@ import {
   decisionInvocations, heartbeatRuns, issues, projects, companySecrets, type Db,
 } from "@paperclipai/db";
 import {
-  DECISION_MODELS, decisionProviderForConnection, decisionRequestSchema, updateDecisionModelSchema,
+  DECISION_MODELS, aiConnectionMetadataSchema, decisionProviderForConnection, decisionRequestSchema, updateDecisionModelSchema,
   centsToUnits, unitsToCents, type DecisionAvailability, type DecisionConnectionChoice, type DecisionHistoryEntry,
   type DecisionModelSettings, type DecisionProvider, type DecisionRequest, type DecisionResult, type DecisionUnavailableReason, type UpdateDecisionModel,
 } from "@paperclipai/shared";
@@ -42,6 +42,22 @@ export interface DecisionContext {
 class DecisionUnavailable extends Error {
   constructor(readonly reason: DecisionUnavailableReason) { super(reason); }
 }
+function storedRoute(connection: { connection: { config: { ai?: unknown } } }) {
+  const metadata = aiConnectionMetadataSchema.safeParse(connection.connection.config.ai);
+  return metadata.success ? metadata.data.routing : undefined;
+}
+function usesCredential(connection: { connection: { config: { ai?: unknown } } }) {
+  return storedRoute(connection)?.auth !== "none";
+}
+function credentialSecretId(connection: { grant: { credentialSecretRefs: { configPath: string; secretId: string }[] } }) {
+  return connection.grant.credentialSecretRefs.find(ref => ref.configPath === "ai.credential")?.secretId;
+}
+const LEDGER_PROVIDER_BY_DECISION_PROVIDER: Record<string, string> = { openrouter: "typesafe", ollama: "ollama" };
+
+function ledgerProviderFor(decisionProvider: string) {
+  return LEDGER_PROVIDER_BY_DECISION_PROVIDER[decisionProvider] ?? "openai";
+}
+
 function unavailableReason(error: unknown): DecisionUnavailableReason | null {
   if (error instanceof DecisionUnavailable) return error.reason;
   if (error instanceof HttpError) {
@@ -203,8 +219,8 @@ export function decisionModelService(db: Db, options: { provider?: typeof runDec
         usageKind: "decision", responsibleUserId: invocation.responsibleUserId, ...links,
         // Run attribution lives on the invocation. Run receipt reconciliation must not ingest this independent charge.
         heartbeatRunId: null, idempotencyKey: `decision:${invocation.id}`,
-        provider: invocation.provider === "openrouter" ? "typesafe" : "openai", biller: invocation.provider,
-        billingType: "metered_api", costStatus: receipt.costStatus, model: invocation.model,
+        provider: ledgerProviderFor(invocation.provider), biller: invocation.provider,
+        billingType: invocation.provider === "ollama" ? "fixed" : "metered_api", costStatus: receipt.costStatus, model: invocation.model,
         inputTokens: receipt.inputTokens ?? 0, outputTokens: receipt.outputTokens ?? 0, costCents: receipt.costCents ?? "0",
         providerRequestId: receipt.providerRequestId, pricingProvenance: receipt.pricingProvenance, occurredAt: invocation.startedAt,
       }, publications, { actorType: invocation.actorType as "system" | "user" | "agent", actorId: invocation.actorId, agentId: links.agentId });
@@ -225,10 +241,11 @@ export function decisionModelService(db: Db, options: { provider?: typeof runDec
     let selected: Awaited<ReturnType<typeof resolve>>;
     try { selected = await resolve(context); }
     catch (error) { const reason = unavailableReason(error); if (reason) return { status: "unavailable", reason }; throw error; }
-    const secretId = selected.connection.grant.credentialSecretRefs.find(ref => ref.configPath === "ai.credential")?.secretId;
+    const credentialRequired = usesCredential(selected.connection);
+    const secretId = credentialRequired ? credentialSecretId(selected.connection) : undefined;
     const [credentialSnapshot] = secretId ? await db.select({ id: companySecrets.id, status: companySecrets.status, version: companySecrets.latestVersion })
       .from(companySecrets).where(and(eq(companySecrets.companyId, context.companyId), eq(companySecrets.id, secretId))) : [];
-    if (!credentialSnapshot || credentialSnapshot.status !== "active") return { status: "unavailable", reason: "connection_unavailable" };
+    if (credentialRequired && (!credentialSnapshot || credentialSnapshot.status !== "active")) return { status: "unavailable", reason: "connection_unavailable" };
     let credential: string;
     try { credential = await aiConnectionService(db).credential(selected.connection, 0, { responsibleUserId: selected.userId,
       actorType: selected.actorType, actorId: selected.actorId, issueId: selected.issueId, heartbeatRunId: selected.runId }); }
@@ -253,16 +270,17 @@ export function decisionModelService(db: Db, options: { provider?: typeof runDec
         || current.config.connectionId !== selected.config.connectionId || current.config.grantId !== selected.config.grantId
         || current.config.model !== selected.config.model || current.config.provider !== selected.config.provider
         || current.projectId !== selected.projectId
-        || current.connection.grant.credentialSecretRefs.find(ref => ref.configPath === "ai.credential")?.secretId !== credentialSnapshot.id
+        || usesCredential(current.connection) !== credentialRequired
+        || (credentialRequired && credentialSecretId(current.connection) !== credentialSnapshot?.id)
         || current.userId !== selected.userId || current.identityContextId !== selected.identityContextId
         || current.connection.grant.updatedAt.getTime() !== selected.connection.grant.updatedAt.getTime()
         || current.connection.connection.updatedAt.getTime() !== selected.connection.connection.updatedAt.getTime())
         return { reason: "connection_unavailable" as const };
       // Secret changes do not update the connection revision. Serialize against
       // rotation/revocation through this invocation's admission.
-      const [currentSecret] = await tx.select({ status: companySecrets.status, version: companySecrets.latestVersion }).from(companySecrets)
-        .where(and(eq(companySecrets.companyId, context.companyId), eq(companySecrets.id, credentialSnapshot.id))).for("share");
-      if (!currentSecret || currentSecret.status !== "active" || currentSecret.version !== credentialSnapshot.version)
+      const [currentSecret] = credentialSnapshot ? await tx.select({ status: companySecrets.status, version: companySecrets.latestVersion }).from(companySecrets)
+        .where(and(eq(companySecrets.companyId, context.companyId), eq(companySecrets.id, credentialSnapshot.id))).for("share") : [];
+      if (credentialSnapshot && (!currentSecret || currentSecret.status !== "active" || currentSecret.version !== credentialSnapshot.version))
         return { reason: "connection_unavailable" as const };
       const budgets = budgetServiceInTransaction(tx, publications);
       const { block, policies, observations } = await budgets.evaluateAdmission(context.companyId, current.agentId, { projectId: current.projectId });
@@ -290,6 +308,7 @@ export function decisionModelService(db: Db, options: { provider?: typeof runDec
     const invocation = admission.invocation!;
     let outcome: DecisionProviderOutcome;
     try { outcome = await providerCall({ provider: selected.connection.provider, model: invocation.model, apiKey: credential,
+      baseUrl: storedRoute(selected.connection)?.baseUrl,
       request: parsed.data, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }); }
     catch { outcome = { errorCode: "provider_failed", receipt: decisionReceipt(selected.connection.provider, null) }; }
     await settle(invocation, outcome);

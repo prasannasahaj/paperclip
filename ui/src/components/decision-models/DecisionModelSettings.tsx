@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DECISION_MODELS, type DecisionConnectionChoice, type DecisionModelSettings, type DecisionProvider, type DecisionResult, type UpdateDecisionModel } from "@paperclipai/shared";
+import { DECISION_MODELS, decisionProviderForConnection, type DecisionConnectionChoice, type DecisionModelSettings, type DecisionProvider, type DecisionResult, type UpdateDecisionModel } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { decisionModelsApi } from "@/api/decision-models";
 import { describeError } from "@/api/errors";
@@ -10,13 +10,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { ToggleField } from "@/components/agent-config-primitives";
 import { ConnectionChoiceList } from "@/features/connections/ConnectionChoiceList";
 import { ConnectionSetupFlow } from "@/features/connections/ConnectionSetupFlow";
+import { AiProviderSetup } from "@/components/ai-connections/AiProviderSetup";
 import { AppLogo } from "@/pages/apps/AppLogo";
 
+const providerLabels: Record<DecisionProvider, string> = { openai: "OpenAI", openrouter: "OpenRouter", ollama: "Ollama (local)" };
+const unusableConnectionNotice = "The connection was saved but cannot be used for decisions. Local endpoints must use No authentication; edit it under Connections.";
 const failureMessages: Record<string, string> = {
   not_configured: "Choose and save a connection first.", disabled: "Enable and save decisions before running a test.",
   connection_unavailable: "The connection is unavailable. Reconnect it and try again.",
   access_denied: "This connection is not shared with you. Review its permissions.",
-  incompatible_connection: "Choose a supported OpenAI or OpenRouter API connection.",
+  incompatible_connection: "Choose a supported OpenAI or OpenRouter API connection, or a local Ollama endpoint without authentication.",
   budget_blocked: "The company or task budget prevents this request. Review Costs and Budgets.",
   provider_auth_failed: "The provider rejected the connection. Reconnect it and try again.",
   provider_rate_limited: "The provider is rate limited. Try again later.",
@@ -50,12 +53,15 @@ export function DecisionModelSettingsView({ settings, choices, saving, testing, 
     </div>
     <p className="text-sm text-muted-foreground">Choose the shared connection Paperclip uses for optional decision features. API usage is charged to this connection.</p>
     <ConnectionChoiceList selectedId={draft.grantId ?? undefined} disabled={saving || testing}
-      choices={choices.map(row => ({ id: row.grantId, name: row.name,
-        description: `${row.decisionModel} · ${row.status === "connected" ? "Connected" : "Needs attention"}`,
-        icon: <AppLogo name={row.provider === "openai" ? "OpenAI" : "OpenRouter"} brandKey={row.provider} size={24} />,
-      }))}
+      choices={choices.map(row => {
+        const provider = decisionProviderForConnection(row) ?? (row.provider === "openai" ? "openai" : "openrouter");
+        return { id: row.grantId, name: row.name,
+          description: `${row.decisionModel} · ${row.status === "connected" ? "Connected" : "Needs attention"}${provider === "ollama" ? " · runs locally" : ""}`,
+          icon: <AppLogo name={providerLabels[provider]} brandKey={provider} size={24} />,
+        };
+      })}
       onSelect={grantId => { const row = choices.find(choice => choice.grantId === grantId)!; setDraft(value => ({ ...value, connectionId: row.id, grantId, enabled: value.connectionId ? value.enabled : true })); }} />
-    {choices.length === 0 && <p className="text-sm text-muted-foreground">Add a shared OpenAI or OpenRouter API connection to get started.</p>}
+    {choices.length === 0 && <p className="text-sm text-muted-foreground">Add a shared OpenAI or OpenRouter API connection, or a local Ollama endpoint, to get started.</p>}
     {draft.connectionId && !selected && <p role="status" className="text-sm text-muted-foreground">The saved connection is unavailable to you. Disable decisions or choose another connection.</p>}
     <div className="flex flex-wrap items-center gap-3">
       <Button variant="outline" size="sm" onClick={onAdd} disabled={saving || testing}>Add connection</Button>
@@ -96,6 +102,7 @@ export function DecisionModelSettingsSection({ companyId }: { companyId: string 
   const [adding, setAdding] = useState(false);
   const [provider, setProvider] = useState<DecisionProvider | null>(null);
   const [newlyConnectedId, setNewlyConnectedId] = useState<string | null>(null);
+  const [unusableConnection, setUnusableConnection] = useState(false);
   const settingsRevision = JSON.stringify(query.data?.settings ?? { companyId });
   const test = useMutation({ mutationFn: (_revision: string) => decisionModelsApi.test(companyId), onSettled: () => { void client.invalidateQueries({ queryKey: ["decision-history", companyId] }); void client.invalidateQueries({ predicate: q => String(q.queryKey[0]).includes("cost") }); } });
   const resetTest = test.reset;
@@ -108,24 +115,33 @@ export function DecisionModelSettingsSection({ companyId }: { companyId: string 
   if (view.kind === "loading" || view.kind === "reconnecting") return <QueryPlaceholder size="inline" label="Loading decision model" />;
   if (view.kind === "error") return <QueryErrorState size="panel" error={query.error} action="load decision settings" onRetry={view.retry} retrying={view.isFetching} />;
   if (!query.data?.canManage || !query.data.settings) return null;
+  const onConnectionAdded = async (result: object) => {
+    const refreshed = await query.refetch();
+    if ("connectionId" in result && typeof result.connectionId === "string") {
+      const connectionId = result.connectionId;
+      if (refreshed.data?.choices.some(row => row.id === connectionId)) setNewlyConnectedId(connectionId);
+      else setUnusableConnection(true);
+    }
+    setAdding(false);
+  };
   const testError = test.variables === settingsRevision ? test.error : null;
   return <>
     <DecisionModelSettingsView settings={query.data.settings} choices={query.data.choices} saving={save.isPending} testing={test.isPending}
       error={save.error ? describeError(save.error).body : testError ? describeError(testError).body : undefined}
       result={test.variables === settingsRevision ? test.data : null} newlyConnectedId={newlyConnectedId}
-      onSave={value => save.mutate(value)} onTest={() => test.mutate(settingsRevision)} onAdd={() => { setProvider(null); setAdding(true); }} />
+      onSave={value => save.mutate(value)} onTest={() => test.mutate(settingsRevision)} onAdd={() => { setProvider(null); setUnusableConnection(false); setAdding(true); }} />
+    {unusableConnection && <p role="alert" className="max-w-2xl text-sm text-destructive">{unusableConnectionNotice}</p>}
     <Dialog open={adding} onOpenChange={setAdding}>
       <DialogContent className="sm:max-w-2xl max-h-(--sz-85vh) overflow-y-auto">
         <DialogHeader><DialogTitle>Add a decision connection</DialogTitle><DialogDescription>Use a shared API connection for company decisions.</DialogDescription></DialogHeader>
-        {provider ? <ConnectionSetupFlow host="dialog" serviceSlug={provider} forceNewConnection
+        {provider === "ollama" ? <>
+          <p className="text-sm text-muted-foreground">Enter the URL of your Ollama server, choose a Chat Completions or Responses API format, and choose No authentication. Decisions are sent only to this endpoint.</p>
+          <AiProviderSetup companyId={companyId} initialProvider="local" onCancel={() => setAdding(false)} onComplete={onConnectionAdded} />
+        </> : provider ? <ConnectionSetupFlow host="dialog" serviceSlug={provider} forceNewConnection
           aiConnection={{ provider, method: "api_key", mode: "shared" }} requiredAiOwnership="shared"
-          onCancel={() => setAdding(false)} onComplete={async result => {
-            const refreshed = await query.refetch();
-            if ("connectionId" in result && result.connectionId && refreshed.data?.choices.some(row => row.id === result.connectionId)) setNewlyConnectedId(result.connectionId);
-            setAdding(false);
-          }} /> : <ConnectionChoiceList choices={(Object.keys(DECISION_MODELS) as DecisionProvider[]).map(id => ({ id,
-            name: id === "openai" ? "OpenAI" : "OpenRouter", description: DECISION_MODELS[id].name,
-            icon: <AppLogo name={id === "openai" ? "OpenAI" : "OpenRouter"} brandKey={id} size={24} />,
+          onCancel={() => setAdding(false)} onComplete={onConnectionAdded} /> : <ConnectionChoiceList choices={(Object.keys(DECISION_MODELS) as DecisionProvider[]).map(id => ({ id,
+            name: providerLabels[id], description: DECISION_MODELS[id].name,
+            icon: <AppLogo name={providerLabels[id]} brandKey={id} size={24} />,
           }))} onSelect={id => setProvider(id as DecisionProvider)} />}
       </DialogContent>
     </Dialog>

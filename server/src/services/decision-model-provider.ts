@@ -3,6 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { experimental_decide as decide, type Experimental_DecisionModel } from "ai";
 import { centsToUnits, unitsToCents, type DecisionAnswer, type DecisionProvider, type DecisionRequest } from "@paperclipai/shared";
+import { runOllamaDecision } from "./decision-model-ollama.js";
 
 export interface DecisionProviderReceipt {
   inputTokens: number | null; outputTokens: number | null; providerRequestId: string | null;
@@ -30,6 +31,10 @@ export function decisionReceipt(provider: DecisionProvider, result: unknown): De
   const inputTokens = tokenCount(usage.inputTokens), outputTokens = tokenCount(usage.outputTokens);
   const reported = record(record(metadata.openrouter).usage).cost;
   const base = { inputTokens, outputTokens, providerRequestId: typeof response.id === "string" ? response.id.slice(0, 250) : typeof headers["x-request-id"] === "string" ? headers["x-request-id"].slice(0, 250) : null };
+  if (provider === "ollama") {
+    return { ...base, costCents: "0.0000000", costStatus: "reported",
+      pricingProvenance: { source: "rate_card", version: "local-zero-cost", inputCentsPerMillion: "0.0000000" } };
+  }
   if (provider === "openrouter" && typeof reported === "number" && Number.isFinite(reported) && reported >= 0) {
     return { ...base, costCents: unitsToCents(centsToUnits(reported * 100)), costStatus: "reported", pricingProvenance: { source: "provider_reported" } };
   }
@@ -41,8 +46,13 @@ export function decisionReceipt(provider: DecisionProvider, result: unknown): De
   return { ...base, costCents: null, costStatus: "unpriced", pricingProvenance: { source: "unknown" } };
 }
 export async function runDecisionProvider(input: {
-  provider: DecisionProvider; model: string; apiKey: string; request: DecisionRequest; signal: AbortSignal;
+  provider: DecisionProvider; model: string; apiKey: string; baseUrl?: string; request: DecisionRequest; signal: AbortSignal;
 }, options: { fetch?: typeof fetch } = {}): Promise<DecisionProviderOutcome> {
+  if (input.provider === "ollama") {
+    return input.baseUrl
+      ? runOllamaDecision({ model: input.model, baseUrl: input.baseUrl, request: input.request, signal: input.signal }, options)
+      : { errorCode: "provider_failed", receipt: decisionReceipt("ollama", null) };
+  }
   const native = input.provider === "openai"
     ? createOpenAI({ apiKey: input.apiKey, fetch: options.fetch }).decisionModel(input.model)
     : createOpenRouter({ apiKey: input.apiKey, fetch: options.fetch, headers: OPENROUTER_ATTRIBUTION_HEADERS }).evaluationModel(input.model);
