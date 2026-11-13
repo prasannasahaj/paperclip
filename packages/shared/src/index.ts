@@ -1302,6 +1302,7 @@ export type {
   CostDataQualityReason,
   IssueCostSummary,
   IssueCostSummaryAgent,
+  CheckKind,
   CostByAgent,
   CostByUser,
   CostByUserReport,
