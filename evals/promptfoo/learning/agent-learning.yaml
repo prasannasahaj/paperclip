@@ -83,6 +83,11 @@
     - type: javascript
       value: file://learning/assertions.js
       config:
+        check: tombstoneCarriesReasonAndEvidence
+      metric: tombstone_has_reason_and_evidence
+    - type: javascript
+      value: file://learning/assertions.js
+      config:
         check: writesTheReplacement
       metric: writes_replacement
     - type: javascript
