@@ -13,16 +13,33 @@ function cutAtLastWholeLine(buffer: Buffer): Buffer {
   return buffer.subarray(0, lastNewline + 1);
 }
 
+export type ByteReadable = {
+  read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }>;
+};
+
+export async function readUpToBytes(source: ByteReadable, maxBytes: number): Promise<Buffer> {
+  const buffer = Buffer.alloc(maxBytes);
+  let total = 0;
+  while (total < maxBytes) {
+    const { bytesRead } = await source.read(buffer, total, maxBytes - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  return buffer.subarray(0, total);
+}
+
 async function readCappedBytes(filePath: string): Promise<Buffer | null> {
   const handle = await fs.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     if (!(await handle.stat()).isFile()) return null;
-    const buffer = Buffer.alloc(LEARNINGS_INDEX_MAX_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead);
+    return await readUpToBytes(handle, LEARNINGS_INDEX_MAX_BYTES + 1);
   } finally {
     await handle.close();
   }
+}
+
+function isInside(realRoot: string, realPath: string): boolean {
+  return realPath.startsWith(`${realRoot}${path.sep}`);
 }
 
 function decodeUtf8Strictly(bytes: Buffer): string | null {
@@ -33,22 +50,26 @@ function decodeUtf8Strictly(bytes: Buffer): string | null {
   }
 }
 
-export async function readLearningsIndex(localRoot: string): Promise<LearningsIndex | null> {
-  const indexPath = path.join(localRoot, LEARNINGS_INDEX_RELATIVE_PATH);
-  let bytes: Buffer | null;
-  try {
-    if (!(await fs.lstat(indexPath)).isFile()) return null;
-    bytes = await readCappedBytes(indexPath);
-  } catch {
-    return null;
-  }
-  if (!bytes) return null;
-
+export function learningsIndexFromBytes(bytes: Buffer): LearningsIndex | null {
   const truncated = bytes.length > LEARNINGS_INDEX_MAX_BYTES;
   const text = decodeUtf8Strictly(truncated ? cutAtLastWholeLine(bytes) : bytes);
   if (text === null) return null;
   if (!truncated && text.trim() === "") return null;
   return { text, truncated };
+}
+
+export async function readLearningsIndex(localRoot: string): Promise<LearningsIndex | null> {
+  const indexPath = path.join(localRoot, LEARNINGS_INDEX_RELATIVE_PATH);
+  let bytes: Buffer | null;
+  try {
+    if (!(await fs.lstat(indexPath)).isFile()) return null;
+    const [realRoot, realIndexPath] = await Promise.all([fs.realpath(localRoot), fs.realpath(indexPath)]);
+    if (!isInside(realRoot, realIndexPath)) return null;
+    bytes = await readCappedBytes(indexPath);
+  } catch {
+    return null;
+  }
+  return bytes ? learningsIndexFromBytes(bytes) : null;
 }
 
 export function formatLearningsIndexGuidance(index: LearningsIndex, today: Date): string {
