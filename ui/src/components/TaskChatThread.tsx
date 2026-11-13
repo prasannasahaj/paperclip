@@ -54,7 +54,7 @@ import { McpAppIssueProvider } from "@/components/mcp-app/McpAppIssueContext";
 import { ProviderToolIconsProvider } from "@/components/ProviderToolIcon";
 import { McpAppTurnViews, mcpAppRunRefreshKey } from "@/components/mcp-app/McpAppTurnViews";
 import { ToolCallProgressProvider } from "@/components/task-chat/tool-call-progress";
-import { TaskChatStatusLine } from "@/components/task-chat/TaskChatStatusLine";
+import { TaskChatStatusLineHost } from "@/components/task-chat/TaskChatStatusLineHost";
 import { TaskChatRunnerHeader, TaskChatRunnerTurn } from "@/components/task-chat/TaskChatRunnerTurn";
 import { partitionRunHealthItems } from "@/components/task-chat/TaskChatRunHealthBanner";
 import {
@@ -3593,14 +3593,14 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                   <>
                     {composerAccessory}
                     {dismissError ? <p role="alert" className="text-sm text-destructive">{dismissError}</p> : null}
-                    {tailRunId ? (
-                      <TaskChatStatusLine
-                        runState={tailStatus}
-                        items={tailItems}
-                        startedAtMs={tailStartedAtMs}
-                        usageJson={linkedRunMetaById.get(tailRunId)?.usageJson}
-                      />
-                    ) : null}
+                    <TaskChatStatusLineHost
+                      issueId={issueId}
+                      companyId={companyId ?? null}
+                      agent={tailAgent}
+                      runState={tailRunId ? tailStatus : null}
+                      items={tailItems}
+                      startedAtMs={tailStartedAtMs}
+                    />
                     {tailTurnStatus ? (
                       <TaskChatTurnStatusIsland
                         key={tailRunId ?? "turn-status"}
