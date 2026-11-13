@@ -6,7 +6,9 @@ import {
   LEARNINGS_INDEX_MAX_BYTES,
   LEARNINGS_INDEX_RELATIVE_PATH,
   formatLearningsIndexGuidance,
+  learningsIndexFromBytes,
   readLearningsIndex,
+  readUpToBytes,
 } from "../services/agent-learnings-index.js";
 
 describe("readLearningsIndex", () => {
@@ -39,6 +41,18 @@ describe("readLearningsIndex", () => {
     await fs.writeFile(realFile, "- a real entry\n");
     await fs.symlink(realFile, indexPath());
     await expect(readLearningsIndex(root)).resolves.toBeNull();
+  });
+
+  it("returns null when the learnings directory is a symlink to outside the root", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "agent-learnings-outside-"));
+    try {
+      await fs.writeFile(path.join(outside, "INDEX.md"), "- an entry outside the root\n");
+      await fs.rm(path.join(root, "learnings"), { recursive: true, force: true });
+      await fs.symlink(outside, path.join(root, "learnings"));
+      await expect(readLearningsIndex(root)).resolves.toBeNull();
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("returns null for invalid UTF-8", async () => {
@@ -89,6 +103,43 @@ describe("readLearningsIndex", () => {
     expect(result!.text).not.toContain("�");
     expect(Buffer.from(result!.text, "utf8").toString("utf8")).toBe(result!.text);
     expect(content.startsWith(result!.text)).toBe(true);
+  });
+});
+
+describe("readUpToBytes", () => {
+  function shortReadingSource(content: Buffer, chunkSizes: number[]) {
+    let call = 0;
+    return {
+      async read(buffer: Buffer, offset: number, length: number, position: number) {
+        const chunk = chunkSizes[call++ % chunkSizes.length];
+        const bytesRead = Math.min(chunk, length, Math.max(content.length - position, 0));
+        content.copy(buffer, offset, position, position + bytesRead);
+        return { bytesRead };
+      },
+    };
+  }
+
+  it("collects the full cap even when the source returns short reads", async () => {
+    const lines = Array.from({ length: 400 }, (_, i) => `- entry number ${i} with some padding`);
+    const content = Buffer.from(`${lines.join("\n")}\n`);
+    const wanted = LEARNINGS_INDEX_MAX_BYTES + 1;
+
+    const bytes = await readUpToBytes(shortReadingSource(content, [1, 7, 3, 5]), wanted);
+
+    expect(bytes.equals(content.subarray(0, wanted))).toBe(true);
+    const index = learningsIndexFromBytes(bytes);
+    expect(index).not.toBeNull();
+    expect(index!.truncated).toBe(true);
+    expect(Buffer.byteLength(index!.text)).toBeLessThanOrEqual(LEARNINGS_INDEX_MAX_BYTES);
+    expect(index!.text.endsWith("\n")).toBe(true);
+    expect(content.toString("utf8").startsWith(index!.text)).toBe(true);
+    expect(index).toEqual(learningsIndexFromBytes(content.subarray(0, wanted)));
+  });
+
+  it("stops at end of file when the source has fewer bytes than requested", async () => {
+    const content = Buffer.from("- short\n");
+    const bytes = await readUpToBytes(shortReadingSource(content, [2]), LEARNINGS_INDEX_MAX_BYTES + 1);
+    expect(bytes.equals(content)).toBe(true);
   });
 });
 
