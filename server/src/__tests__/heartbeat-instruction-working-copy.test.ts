@@ -9,7 +9,7 @@ import { registerServerAdapter, unregisterServerAdapter } from "../adapters/inde
 import { heartbeatService } from "../services/heartbeat.js";
 import { resolveManagedInstructionsRoot } from "../services/agent-instructions.js";
 import { AGENT_FILES_CONTRACT } from "../services/agent-file-store.js";
-import { composeInstructionGuidance } from "../services/heartbeat/instruction-working-copy.js";
+import { appendGuidanceToTaskMarkdown, composeInstructionGuidance } from "../services/heartbeat/instruction-working-copy.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
 const cleanup = vi.hoisted(() => ({ failures: new Set<string>(), revocations: new Set<string>(), attempts: new Map<string, number>() }));
@@ -54,6 +54,25 @@ describe("composeInstructionGuidance", () => {
 
   it("adds nothing for a legacy instruction copy", () => {
     expect(composeInstructionGuidance(legacyCopy, learningsIndex, today)).not.toContain("learnings/INDEX.md");
+  });
+});
+
+describe("appendGuidanceToTaskMarkdown", () => {
+  const guidance = "Directory guidance\n\nLearnings guidance";
+
+  it("appends the guidance to every assignment key that is already present", () => {
+    const context: Record<string, unknown> = {
+      paperclipTaskMarkdown: "Task", paperclipTaskMarkdownCompact: "Compact",
+      paperclipTaskMarkdownAssignment: "Assignment", paperclipTaskMarkdownAssignmentCompact: "Assignment compact",
+    };
+    appendGuidanceToTaskMarkdown(context, guidance);
+    for (const key of Object.keys(context)) expect(String(context[key]).endsWith(`\n\n${guidance}`)).toBe(true);
+  });
+
+  it("does not create assignment keys that are absent", () => {
+    const context: Record<string, unknown> = { paperclipTaskMarkdown: "Task" };
+    appendGuidanceToTaskMarkdown(context, guidance);
+    expect(context).toEqual({ paperclipTaskMarkdown: `Task\n\n${guidance}`, paperclipTaskMarkdownCompact: guidance });
   });
 });
 
@@ -163,6 +182,12 @@ describePostgres("heartbeat instruction working-copy lifecycle", () => {
     for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
       expect(input.context[key]).toContain(learningsIndexLine);
       expect(input.context[key]).toContain("learnings/INDEX.md");
+      expect(input.context[key]).toContain("Your persistent agent directory is");
+    }
+    expect(input.context.paperclipTaskMarkdownAssignment).toBeDefined();
+    for (const key of ["paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"]) {
+      if (input.context[key] === undefined) continue;
+      expect(input.context[key]).toContain(learningsIndexLine);
       expect(input.context[key]).toContain("Your persistent agent directory is");
     }
   });

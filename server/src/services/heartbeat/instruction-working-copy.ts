@@ -34,6 +34,19 @@ export function composeInstructionGuidance(
   return [directoryGuidance, formatLearningsIndexGuidance(learningsIndex, today)].join("\n\n");
 }
 
+const ALWAYS_GUIDED_TASK_MARKDOWN_KEYS = ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"];
+const ASSIGNMENT_TASK_MARKDOWN_KEYS = ["paperclipTaskMarkdownAssignment", "paperclipTaskMarkdownAssignmentCompact"];
+
+export function appendGuidanceToTaskMarkdown(context: Record<string, unknown>, guidance: string): void {
+  const keys = [
+    ...ALWAYS_GUIDED_TASK_MARKDOWN_KEYS,
+    ...ASSIGNMENT_TASK_MARKDOWN_KEYS.filter(key => readNonEmptyString(context[key])),
+  ];
+  for (const key of keys) {
+    context[key] = [readNonEmptyString(context[key]), guidance].filter(Boolean).join("\n\n");
+  }
+}
+
 /** A failed cleanup is deferred once per run; it cannot replace the run result. */
 export function createHeartbeatInstructionCopyRelease(
   instructionCleanupRun: Selection["run"],
@@ -230,10 +243,7 @@ export function createHeartbeatInstructionWorkingCopy(input: InstructionWorkingC
           };
         }
         const learningsIndex = isAgentDirectoryCopy(instructionCopy) ? await readLearningsIndex(instructionCopy.localRoot) : null;
-        const guidance = composeInstructionGuidance(instructionCopy, learningsIndex, new Date());
-        for (const key of ["paperclipTaskMarkdown", "paperclipTaskMarkdownCompact"]) {
-          context[key] = [readNonEmptyString(context[key]), guidance].filter(Boolean).join("\n\n");
-        }
+        appendGuidanceToTaskMarkdown(context, composeInstructionGuidance(instructionCopy, learningsIndex, new Date()));
       }
     }
     return runtimeConfig;
