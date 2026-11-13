@@ -631,6 +631,16 @@ Exact response fields are documented in `skills/paperclip/references/api-referen
 - **Hiring**: use the `paperclip-create-agent` skill for new agent creation workflows (links to reusable `AGENTS.md` templates like `Coder` and `QA`).
 - **Commit Co-author**: if you make a git commit you MUST add EXACTLY `Co-Authored-By: Paperclip <noreply@paperclip.ing>` to the end of each commit message. Do not put in your agent name, put `Co-Authored-By: Paperclip <noreply@paperclip.ing>`.
 
+## Verifying Your Work (Required)
+
+Test and hook runs are the usual reason a heartbeat takes minutes. Keep them small and visible.
+
+- **Focused first.** Run the focused test for the files you changed before anything broader, and stop at the first failure (for example `vitest run --bail=1 <changed test files>`). Fix that failure before widening.
+- **Full suite at most once.** Run the full suite at most once per change, after the focused tests pass. Do not re-run it for every push or retry.
+- **Environmental failures end the loop.** If a hook or check fails for environmental reasons (a missing binary, an unsupported sandbox flag, a missing path), report it in a task comment and stop retrying the same command. Retrying a hook that re-runs the whole suite multiplies the wait.
+- **Keep output readable.** Send long output to a file and read its tail, so a failure is found without scrolling the run.
+- **Say what is running.** When a command takes longer than a minute, say what it is and why in your next task comment, so the people watching can tell a long run from a stuck one.
+
 ## Comment Style (Required)
 
 When posting issue comments or writing issue descriptions, use concise markdown with:
