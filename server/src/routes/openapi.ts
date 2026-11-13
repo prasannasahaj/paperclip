@@ -12279,7 +12279,7 @@ registerCurrentRoute({
 registerCurrentRoute({
   method: "post", path: "/api/companies/{companyId}/decision-model/test", tags: ["decision-models"],
   description: companyModelServiceSettingsPage("Decision model"),
-  summary: "Run the fixed billed three-question setup test as a connection manager",
+  summary: "Run the fixed three-question setup test and record its usage as a connection manager",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 registerCurrentRoute({
