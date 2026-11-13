@@ -44,7 +44,7 @@ import {
   type ReferencedSourceIgnoreResolution,
   type SandboxAdditionalSource,
 } from "@paperclipai/adapter-utils/execution-target";
-import { captureLocalProcess, capturedProcessExited, killCapturedLocalProcess } from "./local-process-control.js";
+import { captureLocalProcess, capturedProcessExited, killCapturedLocalProcessTree } from "./local-process-control.js";
 import type { DuplexLossReason } from "../duplex-observability.js";
 import { DUPLEX_CHANNEL_LOST_ERROR_CODE } from "../bridge-transport-contract.js";
 import {
@@ -5281,7 +5281,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             if (providerPid && !prepared.processSessionBridge) {
               // Escalate the owned local process directly. A second ACP close
               // can wait behind the same hung cleanup (or open a new client).
-              killCapturedLocalProcess(processIdentitySink.localProcess);
+              killCapturedLocalProcessTree(processIdentitySink.localProcess);
             } else {
               void runtime.close({ handle: sessionHandle, reason: "operator stop deadline", discardPersistentState: true })
                 .catch(() => {});
