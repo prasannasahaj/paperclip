@@ -74,6 +74,24 @@ describe("resolveCavemanBinaries", () => {
     expect(resolved).toBeNull();
   });
 
+  it("ignores a directory named like the binary", async () => {
+    const directoryOnPath = path.join(sandbox, "first-bin");
+    await mkdir(path.join(directoryOnPath, PROXY_NAME), { recursive: true });
+    const overrideDirectory = path.join(sandbox, "override-dir");
+    await mkdir(overrideDirectory, { recursive: true });
+    const env = {
+      PATH: [directoryOnPath, pathDir].join(path.delimiter),
+      CAVEMAN_MCP_BIN: overrideDirectory,
+    };
+
+    expect(await resolveCavemanBinaries({ env, homeDir })).toBeNull();
+
+    const proxy = await writeStub(pathDir, PROXY_NAME);
+    const mcp = await writeStub(pathDir, MCP_NAME);
+
+    expect(await resolveCavemanBinaries({ env, homeDir })).toEqual({ proxy, mcp });
+  });
+
   it.skipIf(process.platform === "win32")("ignores non-executable files", async () => {
     await writeStub(pathDir, PROXY_NAME, 0o644);
     await writeStub(pathDir, MCP_NAME);

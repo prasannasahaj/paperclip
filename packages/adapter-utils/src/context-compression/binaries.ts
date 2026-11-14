@@ -1,4 +1,4 @@
-import { access, constants } from "node:fs/promises";
+import { access, constants, stat } from "node:fs/promises";
 import path from "node:path";
 
 export interface CavemanBinaries {
@@ -10,6 +10,7 @@ const EXECUTABLE_SUFFIX = process.platform === "win32" ? ".exe" : "";
 
 async function isExecutable(filePath: string): Promise<boolean> {
   try {
+    if (!(await stat(filePath)).isFile()) return false;
     await access(filePath, constants.X_OK);
     return true;
   } catch {
