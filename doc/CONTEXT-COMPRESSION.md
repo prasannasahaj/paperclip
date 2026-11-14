@@ -159,10 +159,16 @@ only for a closed allowlist of names, among them `mcp__caveman__caveman_retrieve
 (upstream `proxy/providers/adapter.go`). Any other server name would make the
 recovered original get compressed again.
 
-A warm Claude process is reused across runs when the only MCP server attached is
-this recovery server and the proxy base URL is unchanged. Run-scoped servers
-(credentialed runtime MCP servers, the Playwright browser) and a changed or
-missing proxy URL still start a fresh process.
+The `claude-agent-acp` process is relaunched on every host-lane run today, with
+or without compression. The ACP session resumes through its session id, but the
+process does not carry over: the host-lane reuse candidate always carries the
+run-minted API key as a live run-scoped credential, and `decideReuse` discards
+any candidate with one (`execute.ts:5794`, `settlement-sequence.ts:119-121`),
+and the only `set` into the process cache is for staged runtimes
+(`execute.ts:3808`). Compression does not change this. The warm-handle rules in
+`execute.ts` (the recovery server does not force a discard, a changed
+`ANTHROPIC_BASE_URL` does) apply only if host-lane reuse is enabled later.
+Verified by reading those lines; not exercised at runtime.
 
 Flipping a run between proxy and direct (a fallback, switching the setting, a
 CLI-engine run, or the recovery tool appearing or disappearing) changes the
