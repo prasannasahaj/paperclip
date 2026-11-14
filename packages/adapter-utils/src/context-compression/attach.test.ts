@@ -21,6 +21,7 @@ function createHarness(
     binaries?: CavemanBinaries | null;
     ensureRunning?: () => Promise<ProxyAvailability>;
     resolveBinaries?: () => Promise<CavemanBinaries | null>;
+    onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void> | void;
   } = {},
 ) {
   const ensureRunning = vi.fn(overrides.ensureRunning ?? (async () => availableAt("on")));
@@ -31,7 +32,7 @@ function createHarness(
   const mcpServers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
   const attach = () =>
     attachContextCompression({
-      config: overrides.config ?? {},
+      config: overrides.config === undefined ? {} : overrides.config,
       companyId: "company-1",
       instanceRoot: "/fake/instance",
       acpxAgent: overrides.acpxAgent ?? "claude",
@@ -39,9 +40,11 @@ function createHarness(
       env,
       hostEnv: overrides.hostEnv ?? {},
       mcpServers,
-      onLog: async (stream, chunk) => {
-        logs.push({ stream, chunk });
-      },
+      onLog:
+        overrides.onLog ??
+        (async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        }),
       supervisor,
       resolveBinaries: resolveBinaries as never,
     });
@@ -202,13 +205,83 @@ describe("attachContextCompression", () => {
     expect(harness.logs).toEqual([{ stream: "stdout", chunk: "[paperclip] Context compression: record\n" }]);
   });
 
-  it("does not push a duplicate MCP server when attached twice to the same collections", async () => {
+  it("does not push a second recovery server when one is already present", async () => {
     const harness = createHarness();
+    const existingServer = { name: "Caveman recovery", command: "/existing/caveman-mcp", args: [], env: [] };
+    harness.mcpServers.push(existingServer);
 
-    await harness.attach();
-    await harness.attach();
+    expect(await harness.attach()).toEqual({ attached: true, baseUrl: BASE_URL });
+    expect(harness.mcpServers).toEqual([existingServer]);
+    expect(harness.env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
+  });
 
-    expect(harness.mcpServers).toHaveLength(1);
+  describe.each([
+    [
+      "throwing",
+      () => {
+        throw new Error("log sink exploded");
+      },
+    ],
+    ["rejecting", () => Promise.reject(new Error("log sink exploded"))],
+  ])("with a %s onLog", (_label, failingOnLog) => {
+    it("still reports the pinned base url skip", async () => {
+      const harness = createHarness({ env: { ANTHROPIC_BASE_URL: "https://gateway.example" }, onLog: failingOnLog });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: false, reason: "base-url-pinned" });
+      expect(harness.env.ANTHROPIC_BASE_URL).toBe("https://gateway.example");
+      expect(harness.mcpServers).toEqual([]);
+    });
+
+    it("still reports the Bedrock skip", async () => {
+      const harness = createHarness({ env: { CLAUDE_CODE_USE_BEDROCK: "1" }, onLog: failingOnLog });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: false, reason: "bedrock" });
+      expect(harness.env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(harness.mcpServers).toEqual([]);
+    });
+
+    it("still reports attached with consistent env and MCP server when the success log fails", async () => {
+      const harness = createHarness({ onLog: failingOnLog });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: true, baseUrl: BASE_URL });
+      expect(harness.env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
+      expect(harness.mcpServers.map((server) => server.name)).toEqual(["Caveman recovery"]);
+    });
+
+    it("still reports binaries-missing", async () => {
+      const harness = createHarness({ binaries: null, onLog: failingOnLog });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: false, reason: "binaries-missing" });
+    });
+
+    it("still reports proxy-unavailable", async () => {
+      const harness = createHarness({
+        ensureRunning: async () => ({ available: false, reason: "no port" }),
+        onLog: failingOnLog,
+      });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: false, reason: "proxy-unavailable" });
+      expect(harness.env).toEqual({});
+    });
+
+    it("still reports proxy-unavailable when the supervisor throws", async () => {
+      const harness = createHarness({
+        ensureRunning: async () => {
+          throw new Error("supervisor exploded");
+        },
+        onLog: failingOnLog,
+      });
+
+      await expect(harness.attach()).resolves.toEqual({ attached: false, reason: "proxy-unavailable" });
+    });
+  });
+
+  it("never throws when the config cannot be read", async () => {
+    const harness = createHarness({ config: null as unknown as Record<string, unknown> });
+
+    expect(await harness.attach()).toEqual({ attached: false, reason: "proxy-unavailable" });
+    expect(harness.env).toEqual({});
+    expect(harness.logs).toHaveLength(1);
   });
 
   it("never throws when the supervisor rejects", async () => {

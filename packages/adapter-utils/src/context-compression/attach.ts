@@ -61,64 +61,90 @@ function skip(reason: CompressionSkipReason): AttachContextCompressionResult {
   return { attached: false, reason };
 }
 
-export async function attachContextCompression(
-  input: AttachContextCompressionInput,
-): Promise<AttachContextCompressionResult> {
+async function logQuietly(
+  onLog: AttachContextCompressionInput["onLog"],
+  stream: "stdout" | "stderr",
+  chunk: string,
+): Promise<void> {
+  try {
+    await onLog(stream, chunk);
+  } catch {
+    return;
+  }
+}
+
+async function attachWhenEligible(input: AttachContextCompressionInput): Promise<AttachContextCompressionResult> {
   const requestedMode = readContextCompressionMode(input.config);
   if (requestedMode === "off") return skip("disabled");
   if (input.acpxAgent !== "claude") return skip("not-claude");
   if (input.executionTargetIsRemote) return skip("remote-target");
 
   if (isPresent(input.env.ANTHROPIC_BASE_URL) || isPresent(input.hostEnv.ANTHROPIC_BASE_URL)) {
-    await input.onLog(
+    await logQuietly(
+      input.onLog,
       "stdout",
       `${LOG_PREFIX} skipped: ANTHROPIC_BASE_URL is already set, so Claude keeps using that endpoint.\n`,
     );
     return skip("base-url-pinned");
   }
   if (hasBedrockSettings(input.env) || hasBedrockSettings(input.hostEnv)) {
-    await input.onLog("stdout", `${LOG_PREFIX} skipped: Claude is configured for Bedrock.\n`);
+    await logQuietly(input.onLog, "stdout", `${LOG_PREFIX} skipped: Claude is configured for Bedrock.\n`);
     return skip("bedrock");
   }
 
-  try {
-    const resolveBinaries = input.resolveBinaries ?? resolveCavemanBinaries;
-    const binaries = await resolveBinaries({ env: input.hostEnv, homeDir: os.homedir() });
-    if (!binaries) {
-      await input.onLog(
-        "stderr",
-        `${LOG_PREFIX} unavailable: caveman-proxy and caveman-mcp were not found on PATH or in ~/.caveman/bin; continuing without it.\n`,
-      );
-      return skip("binaries-missing");
-    }
+  const resolveBinaries = input.resolveBinaries ?? resolveCavemanBinaries;
+  const binaries = await resolveBinaries({ env: input.hostEnv, homeDir: os.homedir() });
+  if (!binaries) {
+    await logQuietly(
+      input.onLog,
+      "stderr",
+      `${LOG_PREFIX} unavailable: caveman-proxy and caveman-mcp were not found on PATH or in ~/.caveman/bin; continuing without it.\n`,
+    );
+    return skip("binaries-missing");
+  }
 
-    const supervisor = input.supervisor ?? getCompressionSupervisor();
-    const availability = await supervisor.ensureRunning({
-      companyId: input.companyId,
-      instanceRoot: input.instanceRoot,
-      mode: requestedMode,
-      binaries,
+  const supervisor = input.supervisor ?? getCompressionSupervisor();
+  const availability = await supervisor.ensureRunning({
+    companyId: input.companyId,
+    instanceRoot: input.instanceRoot,
+    mode: requestedMode,
+    binaries,
+  });
+  if (!availability.available) {
+    await logQuietly(
+      input.onLog,
+      "stderr",
+      `${LOG_PREFIX} unavailable: ${availability.reason}; continuing without it.\n`,
+    );
+    return skip("proxy-unavailable");
+  }
+
+  input.env.ANTHROPIC_BASE_URL = availability.baseUrl;
+  input.env.DO_NOT_TRACK = "1";
+  const alreadyHasRecoveryServer = input.mcpServers.some((server) => server.name === RECOVERY_MCP_SERVER_NAME);
+  if (availability.mode === "on" && !alreadyHasRecoveryServer) {
+    input.mcpServers.push({
+      name: RECOVERY_MCP_SERVER_NAME,
+      command: binaries.mcp,
+      args: [],
+      env: [{ name: "CAVEMAN_HOME", value: availability.home }],
     });
-    if (!availability.available) {
-      await input.onLog("stderr", `${LOG_PREFIX} unavailable: ${availability.reason}; continuing without it.\n`);
-      return skip("proxy-unavailable");
-    }
+  }
+  await logQuietly(input.onLog, "stdout", `${LOG_PREFIX}: ${availability.mode}\n`);
+  return { attached: true, baseUrl: availability.baseUrl };
+}
 
-    input.env.ANTHROPIC_BASE_URL = availability.baseUrl;
-    input.env.DO_NOT_TRACK = "1";
-    const alreadyHasRecoveryServer = input.mcpServers.some((server) => server.name === RECOVERY_MCP_SERVER_NAME);
-    if (availability.mode === "on" && !alreadyHasRecoveryServer) {
-      input.mcpServers.push({
-        name: RECOVERY_MCP_SERVER_NAME,
-        command: binaries.mcp,
-        args: [],
-        env: [{ name: "CAVEMAN_HOME", value: availability.home }],
-      });
-    }
-    await input.onLog("stdout", `${LOG_PREFIX}: ${availability.mode}\n`);
-    return { attached: true, baseUrl: availability.baseUrl };
+export async function attachContextCompression(
+  input: AttachContextCompressionInput,
+): Promise<AttachContextCompressionResult> {
+  try {
+    return await attachWhenEligible(input);
   } catch (error) {
-    await input.onLog("stderr", `${LOG_PREFIX} unavailable: ${describeError(error)}; continuing without it.\n`);
+    await logQuietly(
+      input.onLog,
+      "stderr",
+      `${LOG_PREFIX} unavailable: ${describeError(error)}; continuing without it.\n`,
+    );
     return skip("proxy-unavailable");
   }
 }
