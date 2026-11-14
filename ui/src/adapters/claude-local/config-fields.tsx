@@ -13,6 +13,13 @@ import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
 
+const contextCompressionHint =
+  "Applies to the ACP engine only. Routes tool output and tool schemas through a local per-company proxy that shrinks them before they reach the model; the originals stay recoverable. Record only measures without changing anything. If the proxy binaries are missing, runs go direct.";
+
+function contextCompressionChoice(value: unknown): "on" | "record" | "off" {
+  return value === "record" || value === "off" ? value : "on";
+}
+
 const instructionsFileHint =
   "Absolute path to a markdown file (e.g. AGENTS.md) that defines this agent's behavior. Injected into the system prompt at runtime.";
 
@@ -87,6 +94,11 @@ export function ClaudeLocalAdvancedFields({
     : eff("adapterConfig", "engine", String(config.engine ?? "auto"));
   const engine = rawEngine === "acp" || rawEngine === "cli" ? rawEngine : "auto";
   const acpSelected = engine === "acp";
+  const contextCompression = contextCompressionChoice(
+    isCreate
+      ? values!.claudeContextCompression
+      : eff("adapterConfig", "contextCompression", config.contextCompression),
+  );
 
   return configFieldsForSection(section, (
     <>
@@ -110,6 +122,22 @@ export function ClaudeLocalAdvancedFields({
           <option value="auto">Default (ACP)</option>
           <option value="cli">Claude CLI</option>
           <option value="acp">ACP</option>
+        </select>
+      </Field>}
+      {!managedSandboxOnly && <Field label="Context compression" hint={contextCompressionHint}>
+        <select
+          className={inputClass}
+          value={contextCompression}
+          onChange={(e) => {
+            const value = contextCompressionChoice(e.target.value);
+            isCreate
+              ? set!({ claudeContextCompression: value })
+              : mark("adapterConfig", "contextCompression", value === "on" ? undefined : value);
+          }}
+        >
+          <option value="on">On</option>
+          <option value="record">Record only</option>
+          <option value="off">Off</option>
         </select>
       </Field>}
       {acpSelected && (

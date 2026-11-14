@@ -34,6 +34,9 @@ export function buildClaudeLocalConfig(v: CreateConfigValues): Record<string, un
       ac.warmHandleIdleMs = v.claudeAcpWarmHandleIdleMs;
     }
   }
+  if (v.claudeContextCompression === "record" || v.claudeContextCompression === "off") {
+    ac.contextCompression = v.claudeContextCompression;
+  }
   if (v.cwd) ac.cwd = v.cwd;
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
   if (v.model) ac.model = v.model;

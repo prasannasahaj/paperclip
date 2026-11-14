@@ -62,6 +62,19 @@ describe("buildClaudeLocalConfig", () => {
     expect(buildClaudeLocalConfig(makeValues({ claudeEngine: "acp" }))).toMatchObject({ engine: "acp" });
   });
 
+  it("omits contextCompression when the form value is the default", () => {
+    expect(buildClaudeLocalConfig(makeValues())).not.toHaveProperty("contextCompression");
+    expect(buildClaudeLocalConfig(makeValues({ claudeContextCompression: "on" }))).not.toHaveProperty("contextCompression");
+  });
+
+  it('writes contextCompression "off" when the form value is off', () => {
+    expect(buildClaudeLocalConfig(makeValues({ claudeContextCompression: "off" }))).toMatchObject({ contextCompression: "off" });
+  });
+
+  it('writes contextCompression "record" when the form value is record', () => {
+    expect(buildClaudeLocalConfig(makeValues({ claudeContextCompression: "record" }))).toMatchObject({ contextCompression: "record" });
+  });
+
   it("keeps user-scoped env bindings so the server resolves them at test time", () => {
     const config = buildClaudeLocalConfig(
       makeValues({
