@@ -1,5 +1,6 @@
 import os from "node:os";
 import { resolveCavemanBinaries } from "./binaries.js";
+import { resolveRecoveryStorePath } from "./company-home.js";
 import { readContextCompressionMode } from "./config.js";
 import { getCompressionSupervisor, type CompressionSupervisor } from "./supervisor.js";
 
@@ -10,6 +11,7 @@ export type CompressionSkipReason =
   | "binaries-missing"
   | "base-url-pinned"
   | "bedrock"
+  | "vertex"
   | "proxy-unavailable";
 
 export interface CompressionMcpServer {
@@ -37,7 +39,7 @@ export type AttachContextCompressionResult =
   | { attached: true; baseUrl: string }
   | { attached: false; reason: CompressionSkipReason };
 
-const RECOVERY_MCP_SERVER_NAME = "Caveman recovery";
+export const RECOVERY_MCP_SERVER_NAME = "caveman";
 const LOG_PREFIX = "[paperclip] Context compression";
 
 function isPresent(value: string | undefined): boolean {
@@ -51,6 +53,14 @@ function isTruthyFlag(value: string | undefined): boolean {
 
 function hasBedrockSettings(source: Record<string, string | undefined>): boolean {
   return isTruthyFlag(source.CLAUDE_CODE_USE_BEDROCK) || isPresent(source.ANTHROPIC_BEDROCK_BASE_URL);
+}
+
+function hasVertexSettings(source: Record<string, string | undefined>): boolean {
+  return isTruthyFlag(source.CLAUDE_CODE_USE_VERTEX) || isPresent(source.ANTHROPIC_VERTEX_BASE_URL);
+}
+
+export function isRecoveryMcpServer(server: { name: string }): boolean {
+  return server.name === RECOVERY_MCP_SERVER_NAME;
 }
 
 function describeError(error: unknown): string {
@@ -91,6 +101,10 @@ async function attachWhenEligible(input: AttachContextCompressionInput): Promise
     await logQuietly(input.onLog, "stdout", `${LOG_PREFIX} skipped: Claude is configured for Bedrock.\n`);
     return skip("bedrock");
   }
+  if (hasVertexSettings(input.env) || hasVertexSettings(input.hostEnv)) {
+    await logQuietly(input.onLog, "stdout", `${LOG_PREFIX} skipped: Claude is configured for Vertex AI.\n`);
+    return skip("vertex");
+  }
 
   const resolveBinaries = input.resolveBinaries ?? resolveCavemanBinaries;
   const binaries = await resolveBinaries({ env: input.hostEnv, homeDir: os.homedir() });
@@ -121,13 +135,17 @@ async function attachWhenEligible(input: AttachContextCompressionInput): Promise
 
   input.env.ANTHROPIC_BASE_URL = availability.baseUrl;
   input.env.DO_NOT_TRACK = "1";
-  const alreadyHasRecoveryServer = input.mcpServers.some((server) => server.name === RECOVERY_MCP_SERVER_NAME);
+  const alreadyHasRecoveryServer = input.mcpServers.some(isRecoveryMcpServer);
   if (availability.mode === "on" && !alreadyHasRecoveryServer) {
     input.mcpServers.push({
       name: RECOVERY_MCP_SERVER_NAME,
       command: binaries.mcp,
       args: [],
-      env: [{ name: "CAVEMAN_HOME", value: availability.home }],
+      env: [
+        { name: "CAVEMAN_HOME", value: availability.home },
+        { name: "CAVEMAN_CCR_DB", value: resolveRecoveryStorePath(availability.home) },
+        { name: "CAVEMAN_MCP_EPHEMERAL", value: "0" },
+      ],
     });
   }
   await logQuietly(input.onLog, "stdout", `${LOG_PREFIX}: ${availability.mode}\n`);

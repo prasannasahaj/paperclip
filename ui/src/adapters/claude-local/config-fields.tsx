@@ -17,7 +17,8 @@ const contextCompressionHint =
   "Applies to the ACP engine only. Routes tool output and tool schemas through a local per-company proxy that shrinks them before they reach the model; the originals stay recoverable. Record only measures without changing anything. If the proxy binaries are missing, runs go direct.";
 
 function contextCompressionChoice(value: unknown): "on" | "record" | "off" {
-  return value === "record" || value === "off" ? value : "on";
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : value;
+  return normalized === "record" || normalized === "off" ? normalized : "on";
 }
 
 const instructionsFileHint =

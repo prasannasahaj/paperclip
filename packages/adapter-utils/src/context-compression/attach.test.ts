@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { attachContextCompression } from "./attach.js";
 import type { CavemanBinaries } from "./binaries.js";
@@ -61,7 +62,16 @@ describe("attachContextCompression", () => {
     expect(harness.env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
     expect(harness.env.DO_NOT_TRACK).toBe("1");
     expect(harness.mcpServers).toEqual([
-      { name: "Caveman recovery", command: BINARIES.mcp, args: [], env: [{ name: "CAVEMAN_HOME", value: HOME }] },
+      {
+        name: "caveman",
+        command: BINARIES.mcp,
+        args: [],
+        env: [
+          { name: "CAVEMAN_HOME", value: HOME },
+          { name: "CAVEMAN_CCR_DB", value: path.join(HOME, "ccr.db") },
+          { name: "CAVEMAN_MCP_EPHEMERAL", value: "0" },
+        ],
+      },
     ]);
     expect(harness.logs).toEqual([{ stream: "stdout", chunk: "[paperclip] Context compression: on\n" }]);
     expect(harness.ensureRunning).toHaveBeenCalledWith({
@@ -140,6 +150,27 @@ describe("attachContextCompression", () => {
     expect(harness.ensureRunning).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["CLAUDE_CODE_USE_VERTEX=1 in the adapter env", { env: { CLAUDE_CODE_USE_VERTEX: "1" } }],
+    ["CLAUDE_CODE_USE_VERTEX=true in the adapter env", { env: { CLAUDE_CODE_USE_VERTEX: "true" } }],
+    ["ANTHROPIC_VERTEX_BASE_URL in the adapter env", { env: { ANTHROPIC_VERTEX_BASE_URL: "https://vertex.example" } }],
+    ["CLAUDE_CODE_USE_VERTEX=1 in the host env", { hostEnv: { CLAUDE_CODE_USE_VERTEX: "1" } }],
+    ["ANTHROPIC_VERTEX_BASE_URL in the host env", { hostEnv: { ANTHROPIC_VERTEX_BASE_URL: "https://vertex.example" } }],
+  ])("skips and logs once on Vertex flags: %s", async (_label, overrides) => {
+    const harness = createHarness(overrides);
+
+    expect(await harness.attach()).toEqual({ attached: false, reason: "vertex" });
+    expect(harness.logs).toHaveLength(1);
+    expect(harness.logs[0].chunk).toMatch(/^\[paperclip\] Context compression .*Vertex/);
+    expect(harness.ensureRunning).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a falsy Vertex flag as Vertex", async () => {
+    const harness = createHarness({ env: { CLAUDE_CODE_USE_VERTEX: "0", ANTHROPIC_VERTEX_BASE_URL: "  " } });
+
+    expect(await harness.attach()).toEqual({ attached: true, baseUrl: BASE_URL });
+  });
+
   it("does not treat a falsy Bedrock flag as Bedrock", async () => {
     const harness = createHarness({ env: { CLAUDE_CODE_USE_BEDROCK: "0", ANTHROPIC_BEDROCK_BASE_URL: "  " } });
 
@@ -181,6 +212,14 @@ describe("attachContextCompression", () => {
     expect(harness.logs).toEqual([{ stream: "stdout", chunk: "[paperclip] Context compression: record\n" }]);
   });
 
+  it("names the recovery server so Claude Code exposes the allowlisted mcp__caveman__caveman_retrieve tool", async () => {
+    const harness = createHarness();
+
+    await harness.attach();
+
+    expect(harness.mcpServers.map((server) => server.name)).toEqual(["caveman"]);
+  });
+
   it("attaches the MCP server when record was requested but the running proxy started in on", async () => {
     const harness = createHarness({
       config: { contextCompression: "record" },
@@ -189,7 +228,7 @@ describe("attachContextCompression", () => {
 
     expect(await harness.attach()).toEqual({ attached: true, baseUrl: BASE_URL });
     expect(harness.env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
-    expect(harness.mcpServers.map((server) => server.name)).toEqual(["Caveman recovery"]);
+    expect(harness.mcpServers.map((server) => server.name)).toEqual(["caveman"]);
     expect(harness.logs).toEqual([{ stream: "stdout", chunk: "[paperclip] Context compression: on\n" }]);
   });
 
@@ -207,7 +246,7 @@ describe("attachContextCompression", () => {
 
   it("does not push a second recovery server when one is already present", async () => {
     const harness = createHarness();
-    const existingServer = { name: "Caveman recovery", command: "/existing/caveman-mcp", args: [], env: [] };
+    const existingServer = { name: "caveman", command: "/existing/caveman-mcp", args: [], env: [] };
     harness.mcpServers.push(existingServer);
 
     expect(await harness.attach()).toEqual({ attached: true, baseUrl: BASE_URL });
@@ -245,7 +284,7 @@ describe("attachContextCompression", () => {
 
       await expect(harness.attach()).resolves.toEqual({ attached: true, baseUrl: BASE_URL });
       expect(harness.env.ANTHROPIC_BASE_URL).toBe(BASE_URL);
-      expect(harness.mcpServers.map((server) => server.name)).toEqual(["Caveman recovery"]);
+      expect(harness.mcpServers.map((server) => server.name)).toEqual(["caveman"]);
     });
 
     it("still reports binaries-missing", async () => {

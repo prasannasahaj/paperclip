@@ -3,7 +3,7 @@ import { closeSync, openSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import type { CavemanBinaries } from "./binaries.js";
-import { acquireCompressionPort, resolveCompressionHome } from "./company-home.js";
+import { acquireCompressionPort, resolveCompressionHome, resolveRecoveryStorePath } from "./company-home.js";
 import type { ContextCompressionMode } from "./config.js";
 
 export type CompressionProxyMode = Exclude<ContextCompressionMode, "off">;
@@ -27,6 +27,7 @@ export interface CompressionSupervisor {
 export interface CompressionSupervisorDeps {
   spawn?: typeof spawnChildProcess;
   waitForListen?: (port: number, timeoutMs: number) => Promise<boolean>;
+  probeLoopback?: (port: number, timeoutMs: number) => Promise<boolean>;
 }
 
 interface RunningProxy {
@@ -42,8 +43,9 @@ interface RunningProxy {
 type StartOutcome = { started: true; proxy: RunningProxy } | { started: false; reason: string };
 
 const LOOPBACK_HOST = "127.0.0.1";
-const PROXY_LOG_FILE_NAME = "proxy.log";
-const PROXY_LOG_FILE_MODE = 0o600;
+const PROXY_STDERR_FILE_NAME = "proxy.stderr.log";
+const PROXY_STDERR_FILE_MODE = 0o600;
+const REUSE_PROBE_TIMEOUT_MS = 500;
 const STARTUP_LISTEN_TIMEOUT_MS = 5000;
 const STARTUP_CONNECT_RETRY_DELAY_MS = 50;
 const START_ATTEMPTS = 2;
@@ -59,6 +61,20 @@ function tryConnect(port: number): Promise<boolean> {
       socket.destroy();
       resolve(false);
     });
+  });
+}
+
+export function probeLoopbackOnce(port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: LOOPBACK_HOST });
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    function finish(reachable: boolean) {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(reachable);
+    }
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
   });
 }
 
@@ -109,6 +125,9 @@ function buildProxyEnv(input: { home: string; port: number; mode: EnsureRunningI
   env.CAVEMAN_LISTEN = `${LOOPBACK_HOST}:${input.port}`;
   env.CAVEMAN_MODE = input.mode === "record" ? "record" : "compress";
   if (input.mode === "on") env.CAVEMAN_RECOVERY = "mcp";
+  env.CAVEMAN_CCR_DB = resolveRecoveryStorePath(input.home);
+  env.CAVEMAN_CACHE_WARM = "off";
+  env.CAVEMAN_OFFLINE = "1";
   env.DO_NOT_TRACK = "1";
   return env;
 }
@@ -143,21 +162,22 @@ function toAvailability(proxy: RunningProxy): ProxyAvailability {
 export function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}): CompressionSupervisor {
   const spawnProcess = deps.spawn ?? spawnChildProcess;
   const waitForListen = deps.waitForListen ?? waitForLoopbackListen;
+  const probeLoopback = deps.probeLoopback ?? probeLoopbackOnce;
   const proxyByCompany = new Map<string, RunningProxy>();
   const startByCompany = new Map<string, Promise<ProxyAvailability>>();
   let shutdownGeneration = 0;
 
   function spawnProxy(input: EnsureRunningInput, home: string, port: number): RunningProxy {
-    const logDescriptor = openSync(path.join(home, PROXY_LOG_FILE_NAME), "a", PROXY_LOG_FILE_MODE);
+    const stderrDescriptor = openSync(path.join(home, PROXY_STDERR_FILE_NAME), "a", PROXY_STDERR_FILE_MODE);
     let child: ChildProcess;
     try {
       child = spawnProcess(input.binaries.proxy, [], {
         env: buildProxyEnv({ home, port, mode: input.mode }),
-        stdio: ["ignore", logDescriptor, logDescriptor],
+        stdio: ["ignore", "ignore", stderrDescriptor],
         windowsHide: true,
       });
     } finally {
-      closeSync(logDescriptor);
+      closeSync(stderrDescriptor);
     }
 
     let markExited!: () => void;
@@ -233,16 +253,26 @@ export function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}
     }
   }
 
+  async function reuseOrRestart(input: EnsureRunningInput, running: RunningProxy): Promise<ProxyAvailability> {
+    const generation = shutdownGeneration;
+    const answering = await Promise.resolve()
+      .then(() => probeLoopback(running.port, REUSE_PROBE_TIMEOUT_MS))
+      .catch(() => false);
+    if (generation !== shutdownGeneration) return { available: false, reason: "context compression is shutting down" };
+    if (answering && !running.exited) return toAvailability(running);
+    terminate(input.companyId, running);
+    return startProxy(input);
+  }
+
   return {
     async ensureRunning(input) {
       const pendingStart = startByCompany.get(input.companyId);
       if (pendingStart) return pendingStart;
 
       const running = proxyByCompany.get(input.companyId);
-      if (running && !running.exited) return toAvailability(running);
-      if (running) proxyByCompany.delete(input.companyId);
+      if (running?.exited) proxyByCompany.delete(input.companyId);
 
-      const start = startProxy(input);
+      const start = running && !running.exited ? reuseOrRestart(input, running) : startProxy(input);
       startByCompany.set(input.companyId, start);
       const forget = () => {
         if (startByCompany.get(input.companyId) === start) startByCompany.delete(input.companyId);

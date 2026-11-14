@@ -21,7 +21,7 @@ the code does.
 
 | Value | Behavior |
 | --- | --- |
-| `on` (default) | Starts the company proxy in compress mode and registers the `Caveman recovery` MCP server. |
+| `on` (default) | Starts the company proxy in compress mode and registers the `caveman` recovery MCP server. |
 | `record` | Starts the proxy in record mode: pass-through with usage capture. No recovery MCP server is added. |
 | `off` | No proxy, no log line. |
 
@@ -90,7 +90,8 @@ handles are not authorization tokens, so nothing is shared across companies.
 ```text
 <instanceRoot>/companies/<companyId>/context-compression/
   port.json     persisted loopback port, mode 0600
-  proxy.log     proxy stdout and stderr, appended, mode 0600
+  proxy.log     the proxy's own log (it writes and rotates this file itself)
+  proxy.stderr.log  the proxy's stderr only (startup panics), appended, mode 0600
   caveman.db    proxy spend/usage records (written by caveman-proxy)
   ccr.db        recovery store for originals (written by caveman-proxy)
 ```
@@ -106,7 +107,11 @@ handles are not authorization tokens, so nothing is shared across companies.
   `proxy/cmd/caveman-proxy/main.go`); Paperclip does not create them.
 - The proxy is started lazily by the first eligible run, reused by later runs,
   and stopped when the Paperclip server shuts down. There is no health polling.
-  A proxy that has exited is replaced on the next eligible run.
+  Before each run reuses a live proxy, Paperclip makes one loopback connect to
+  its port with a 500 ms timeout. If the connect fails, that proxy is killed and
+  a fresh one is started (concurrent runs share the one restart). A proxy that
+  has exited is replaced on the next eligible run. The probe only proves the port
+  accepts connections; a proxy that accepts but never answers is not detected.
 
 ### Proxy environment
 
@@ -118,6 +123,20 @@ The proxy child does not inherit the server environment. It receives only:
   `SSL_CERT_DIR`;
 - `CAVEMAN_HOME`, `CAVEMAN_LISTEN` (`127.0.0.1:<port>`), `CAVEMAN_MODE`
   (`compress` for `on`, `record` for `record`), `DO_NOT_TRACK=1`;
+- `CAVEMAN_CCR_DB=<home>/ccr.db`, so the proxy and the recovery MCP server read
+  and write the same store whatever the server environment says;
+- `CAVEMAN_CACHE_WARM=off`: the proxy otherwise replays requests with
+  `max_tokens: 0` to keep the prompt cache warm, for up to 60 minutes after the
+  last request, in every mode. Those calls use the agent's credentials outside
+  any run, never reach `cost_events`, continue after a budget hard-stop, and
+  spend plan quota on subscription logins (upstream `proxy/cmd/caveman-proxy/main.go`
+  and `cache_warm.go`). Paperclip turns it off;
+- `CAVEMAN_OFFLINE=1`: upstream's Cloud link ignores routing, event upload and
+  Cloud-side warming when this is set (`proxy/internal/cloudlink/link.go`,
+  `events.go`, `warm.go`). Without it, a missing `<home>/cloud.json` makes the
+  proxy fall back to `$HOME/.caveman-cloud/config.json`, so a server user who
+  once signed in with an older Caveman CLI and enabled routing would route every
+  company proxy through Cloud;
 - `CAVEMAN_RECOVERY=mcp`, in `on` mode only.
 
 Paperclip secrets, adapter env, and provider API keys are not passed to the
@@ -127,8 +146,28 @@ proxy.
 
 When attached, the run's environment gets `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`
 and `DO_NOT_TRACK=1`. In `on` mode the MCP server list also gets an entry named
-`Caveman recovery` (the `caveman-mcp` binary, with `CAVEMAN_HOME` set to the
-company directory), unless one with that name already exists.
+`caveman` (the `caveman-mcp` binary), unless one with that name already exists.
+The binary is launched with `CAVEMAN_HOME` set to the company directory,
+`CAVEMAN_CCR_DB=<home>/ccr.db` (upstream gives it precedence over
+`CAVEMAN_HOME`), and `CAVEMAN_MCP_EPHEMERAL=0` (upstream only treats `1` as
+"in-memory store", so this keeps an inherited `1` from pointing recovery at an
+empty store).
+
+The server name is load-bearing. Claude Code exposes the tool as
+`mcp__<server>__caveman_retrieve`, and the proxy skips compressing a tool result
+only for a closed allowlist of names, among them `mcp__caveman__caveman_retrieve`
+(upstream `proxy/providers/adapter.go`). Any other server name would make the
+recovered original get compressed again.
+
+A warm Claude process is reused across runs when the only MCP server attached is
+this recovery server and the proxy base URL is unchanged. Run-scoped servers
+(credentialed runtime MCP servers, the Playwright browser) and a changed or
+missing proxy URL still start a fresh process.
+
+Flipping a run between proxy and direct (a fallback, switching the setting, a
+CLI-engine run, or the recovery tool appearing or disappearing) changes the
+request bytes once, so that run re-caches its context. Reasoned from upstream's
+byte-stability design, not measured.
 
 ### Skip reasons and log lines
 
@@ -142,16 +181,19 @@ an unexpected error is logged and treated as `proxy-unavailable`.
 | `remote-target` | The run uses a remote execution target. | none |
 | `base-url-pinned` | `ANTHROPIC_BASE_URL` is already set in the run env or the server env, so Claude keeps that endpoint. | stdout |
 | `bedrock` | `CLAUDE_CODE_USE_BEDROCK` is `1`/`true`, or `ANTHROPIC_BEDROCK_BASE_URL` is set, in the run env or the server env. | stdout |
+| `vertex` | `CLAUDE_CODE_USE_VERTEX` is `1`/`true`, or `ANTHROPIC_VERTEX_BASE_URL` is set, in the run env or the server env. The base URL is likely ignored in Vertex mode, so the proxy is not started. | stdout |
 | `binaries-missing` | `caveman-proxy` or `caveman-mcp` not found (see lookup order). | stderr |
 | `proxy-unavailable` | The proxy could not be started (spawn failed, exited early, not listening within 5s after 2 attempts, shutting down) or attach hit an unexpected error. | stderr |
 
 Log lines, all prefixed `[paperclip] Context compression`:
 
 - success, stdout: `[paperclip] Context compression: on` (or `record`);
-- skipped, stdout: `... skipped: ANTHROPIC_BASE_URL is already set, so Claude keeps using that endpoint.` or `... skipped: Claude is configured for Bedrock.`;
+- skipped, stdout: `... skipped: ANTHROPIC_BASE_URL is already set, so Claude keeps using that endpoint.` or `... skipped: Claude is configured for Bedrock.` or `... skipped: Claude is configured for Vertex AI.`;
 - unavailable, stderr: `... unavailable: caveman-proxy and caveman-mcp were not found on PATH or in ~/.caveman/bin; continuing without it.` or `... unavailable: <reason>; continuing without it.`
 
-Proxy output goes to `proxy.log` in the company directory, not the run log.
+Proxy output does not go to the run log. The proxy writes its own `proxy.log` in
+the company directory; Paperclip discards its stdout and keeps only stderr, in
+`proxy.stderr.log`.
 
 ## Fail-open behavior
 
@@ -160,8 +202,9 @@ Handled before the run starts:
 - Binaries missing, proxy fails to start, port or home setup fails, or any
   unexpected error: the run proceeds direct with the warning above.
 - A failed log write never fails attach.
-- A proxy that exited since the last run is detected and restarted; the first
-  eligible run after the exit pays the startup cost (up to two attempts).
+- A proxy that exited since the last run, or that no longer accepts loopback
+  connections, is detected and restarted; the first eligible run after that pays
+  the startup cost (up to two attempts).
 
 Not handled:
 
@@ -183,11 +226,17 @@ Not handled:
 ## Privacy
 
 - The proxy is started with `DO_NOT_TRACK=1`, and so is every attached run.
-  Upstream treats a non-empty, non-zero `DO_NOT_TRACK` as telemetry off.
+  Upstream treats a non-empty, non-zero `DO_NOT_TRACK` as telemetry off, but
+  that stops telemetry events only. It does not stop Cloud routing or warming.
+- The proxy is also started with `CAVEMAN_OFFLINE=1`, which is what upstream
+  checks to disable Cloud routing, event upload and Cloud warming. Paperclip
+  never writes `<home>/cloud.json`; this setting is the enforcement, not the
+  absence of a config file.
 - The proxy listens on loopback only and sees the same provider traffic the
   agent would send directly.
-- **Do not enable Caveman Cloud or Auto routing** for these proxies. Both send
-  prompts off the machine. Paperclip does not configure or use them.
+- Caveman Cloud and Auto routing send prompts off the machine. Paperclip does
+  not configure or use them, and `CAVEMAN_OFFLINE=1` keeps the proxy from
+  picking up a Cloud config from the server user's home directory.
 - Caveman's own `caveman wrap` and Claude Code hooks are out of scope;
   Paperclip manages its own Claude config.
 

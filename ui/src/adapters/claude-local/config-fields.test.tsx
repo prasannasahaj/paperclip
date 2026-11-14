@@ -69,6 +69,16 @@ describe("Claude local context compression field", () => {
     await unmount();
   });
 
+  it.each([
+    ["OFF", "off"],
+    ["  Record ", "record"],
+    ["ON", "on"],
+  ])("normalises the stored value %j the way the runtime does", async (stored, expected) => {
+    const { container, unmount } = await renderEdit({ contextCompression: stored });
+    expect(contextCompressionSelect(container)?.value).toBe(expected);
+    await unmount();
+  });
+
   it("treats an unrecognised stored value as On", async () => {
     const { container, unmount } = await renderEdit({ contextCompression: "turbo" });
     expect(contextCompressionSelect(container)?.value).toBe("on");

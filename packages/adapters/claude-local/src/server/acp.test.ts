@@ -19,6 +19,10 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async (importActual) => {
   };
 });
 import { prepareAdapterExecutionTargetRuntime } from "@paperclipai/adapter-utils/execution-target";
+vi.mock("@paperclipai/adapter-utils/context-compression/index", async (importActual) => {
+  const actual = await importActual<typeof import("@paperclipai/adapter-utils/context-compression/index")>();
+  return { ...actual, attachContextCompression: vi.fn(async () => ({ attached: false, reason: "disabled" })) };
+});
 vi.mock("./cli-capabilities.js", async (importActual) => {
   const actual = await importActual<typeof import("./cli-capabilities.js")>();
   return { ...actual, readBundledClaudeCodeVersion: vi.fn(actual.readBundledClaudeCodeVersion) };

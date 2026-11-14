@@ -3,6 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
+
+vi.mock("@paperclipai/adapter-utils/context-compression/index", async (importActual) => {
+  const actual = await importActual<typeof import("@paperclipai/adapter-utils/context-compression/index")>();
+  return { ...actual, attachContextCompression: vi.fn(async () => ({ attached: false, reason: "disabled" })) };
+});
 import { classifyClaudeTerminalSessionFailure, createClaudeAcpExecutor } from "./acp.js";
 import type { AcpxEngineExecutorOptions } from "@paperclipai/adapter-utils/acpx-engine/execute";
 import { parseAcpxStdoutLine } from "@paperclipai/adapter-utils/acpx-engine/ui";

@@ -131,7 +131,7 @@ import {
   DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
 } from "./constants.js";
 import { buildPlaywrightBrowserLaunch, readPlaywrightBrowserConfig } from "./playwright-browser.js";
-import { attachContextCompression } from "../context-compression/index.js";
+import { attachContextCompression, isRecoveryMcpServer } from "../context-compression/index.js";
 import type {
   AcpRunContext,
   AcquiredRunResources,
@@ -3924,6 +3924,10 @@ async function closeWarmHandle(input: {
   return stopped;
 }
 
+function hasMcpServerBeyondContextCompressionRecovery(servers: AcpxPreparedRuntime["mcpServers"]): boolean {
+  return typeof servers === "function" || servers.some((server) => !isRecoveryMcpServer(server));
+}
+
 function warmHandleMatches(
   entry: RuntimeCacheEntry | undefined,
   runtime: AcpRuntime,
@@ -4566,7 +4570,8 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         if (cached && (cached.observabilityCompatibilityKey !== ctx.observability?.compatibilityKey || ctx.context.refreshTools === true
           || asString(previousParams.mcpFingerprint, "") !== shortHash(prepared.mcpIdentity)
           // MCP bearer credentials are run-scoped, even for an unchanged catalog.
-          || prepared.mcpServers.length > 0)) {
+          || hasMcpServerBeyondContextCompressionRecovery(prepared.mcpServers)
+          || cached.processIdentitySink?.launchEnvironment?.ANTHROPIC_BASE_URL !== prepared.env.ANTHROPIC_BASE_URL)) {
           providerProcessReason = cached.observabilityCompatibilityKey !== ctx.observability?.compatibilityKey
             ? "configuration_changed" : "tools_changed";
           await hostStore.discard(prepared.sessionKey);

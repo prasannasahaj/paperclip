@@ -1,4 +1,4 @@
-export { attachContextCompression } from "./attach.js";
+export { attachContextCompression, isRecoveryMcpServer } from "./attach.js";
 export type {
   AttachContextCompressionInput,
   AttachContextCompressionResult,

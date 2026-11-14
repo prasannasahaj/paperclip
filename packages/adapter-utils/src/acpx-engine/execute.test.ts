@@ -3269,7 +3269,7 @@ describe("shared ACPX engine runtime behavior", () => {
   });
 
   describe("Context compression", () => {
-    const RECOVERY_SERVER_NAME = "Caveman recovery";
+    const RECOVERY_SERVER_NAME = "caveman";
 
     async function claudeConfig(overrides: Record<string, unknown> = {}) {
       const root = await makeTempRoot();
@@ -3316,7 +3316,7 @@ describe("shared ACPX engine runtime behavior", () => {
       }));
     });
 
-    it("adds the Caveman recovery server to ACP mcpServers", async () => {
+    it("adds the caveman recovery server to ACP mcpServers", async () => {
       attachThroughProxyOnPort(41001);
       const run = await runExecutor(await claudeConfig());
       const servers = run.runtimeOptions[0]?.mcpServers as Array<Record<string, unknown>>;
@@ -3349,6 +3349,112 @@ describe("shared ACPX engine runtime behavior", () => {
       expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
       expect(env.DO_NOT_TRACK).toBeUndefined();
       expect(run.runtimeOptions[0]?.mcpServers).toEqual([]);
+    });
+
+    describe("warm provider reuse", () => {
+      type ProviderProcessState = string | undefined;
+
+      async function secondRunProviderProcess(input: {
+        firstPort: number;
+        secondAttach: () => void;
+        config?: Record<string, unknown>;
+        runtimeMcp?: AdapterRuntimeMcpAccess;
+      }): Promise<ProviderProcessState> {
+        const root = await makeTempRoot();
+        const warmHandles = new Map();
+        const events: Array<{ eventType: string; payload?: Record<string, unknown> }> = [];
+        let runtimeOptions: AcpRuntimeOptions & AcpxAgentSpawnHooks;
+        const runtime = buildRuntime(undefined, () => {
+          void runtimeOptions.onAgentSpawn?.({ pid: process.pid, startedAt: new Date().toISOString() });
+        });
+        const execute = createAcpxEngineExecutor({ warmHandles, createRuntime: (options) => {
+          runtimeOptions = options;
+          return runtime as never;
+        } });
+        const base = {
+          agent: { id: "agent-1", companyId: "company-1" },
+          config: {
+            agent: "claude",
+            agentCommand: "node ./fake-acp.js",
+            cwd: root,
+            stateDir: path.join(root, "state"),
+            mode: "persistent",
+            paperclipRuntimeSkills: [],
+            paperclipSkillSync: { desiredSkills: [] },
+            ...input.config,
+          },
+          context: {},
+          runtimeMcp: input.runtimeMcp,
+          onLog: async () => {},
+          onMeta: async () => {},
+        };
+        attachThroughProxyOnPort(input.firstPort);
+        const first = await execute({ ...base, runId: "warm-first", runtime: {} } as never);
+        const params = first.sessionParams!;
+        warmHandles.set(params.sessionKey, {
+          runtime,
+          handle: { backendSessionId: first.sessionId, agentSessionId: "agent-session", runtimeSessionName: "runtime-session" },
+          fingerprint: params.configFingerprint,
+          lastUsedAt: Date.now(),
+          processIdentitySink: {
+            current: undefined,
+            latest: null,
+            launchEnvironment: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${input.firstPort}` },
+          },
+          childStderrState: { logPath: null, pendingLiveLine: "" },
+        });
+        input.secondAttach();
+        await execute({
+          ...base,
+          runId: "warm-second",
+          runtime: { sessionParams: params },
+          onEvent: async (event: { eventType: string; payload?: Record<string, unknown> }) => { events.push(event); },
+        } as never);
+        return summarizeStartupReuse(events).layers.provider_process?.state;
+      }
+
+      it("reuses the warm provider process when the only attached server is the stdio recovery server", async () => {
+        const state = await secondRunProviderProcess({
+          firstPort: 41001,
+          secondAttach: () => attachThroughProxyOnPort(41001),
+        });
+        expect(state).toBe("reused");
+      });
+
+      it("starts a fresh provider process when a runtime MCP server carries run-scoped credentials", async () => {
+        const server = { name: "github", url: "https://example.test/github/mcp", connectionId: "github", token: "token" };
+        const state = await secondRunProviderProcess({
+          firstPort: 41001,
+          secondAttach: () => attachThroughProxyOnPort(41001),
+          runtimeMcp: { getServers: () => [server] },
+        });
+        expect(state).toBe("fresh");
+      });
+
+      it("starts a fresh provider process when a run-scoped browser server is attached", async () => {
+        const state = await secondRunProviderProcess({
+          firstPort: 41001,
+          secondAttach: () => attachThroughProxyOnPort(41001),
+          config: { browser: { enabled: true } },
+        });
+        expect(state).toBe("fresh");
+      });
+
+      it("starts a fresh provider process when the proxy base URL differs from the one the warm process launched with", async () => {
+        const state = await secondRunProviderProcess({
+          firstPort: 41001,
+          secondAttach: () => attachThroughProxyOnPort(52002),
+        });
+        expect(state).toBe("fresh");
+      });
+
+      it("starts a fresh provider process when compression is no longer attached", async () => {
+        const state = await secondRunProviderProcess({
+          firstPort: 41001,
+          secondAttach: () => contextCompression.attach.mockResolvedValue({ attached: false, reason: "proxy-unavailable" }),
+        });
+        expect(state).toBe("fresh");
+      });
     });
 
     it("does not attach for codex runs", async () => {

@@ -13,9 +13,9 @@
 ## Global Constraints
 
 - Setting: `contextCompression: "on" | "record" | "off"`, default `"on"`.
-- One `caveman-proxy` per company; `CAVEMAN_HOME=<instanceRoot>/companies/<companyId>/context-compression`, which holds `caveman.db`, `ccr.db`, `port.json`, and `proxy.log`.
+- One `caveman-proxy` per company; `CAVEMAN_HOME=<instanceRoot>/companies/<companyId>/context-compression`, which holds `caveman.db`, `ccr.db`, `port.json`, `proxy.log` (written by the proxy) and `proxy.stderr.log` (the child's stderr).
 - Proxy env: `CAVEMAN_HOME`, `CAVEMAN_LISTEN=127.0.0.1:<port>`, `CAVEMAN_MODE=compress` (setting `on`) or `record` (setting `record`), `CAVEMAN_RECOVERY=mcp` for `on`, `DO_NOT_TRACK=1`. Never sign in to or use Caveman Cloud.
-- Agent env injected: `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`, `DO_NOT_TRACK=1`. MCP server name: `Caveman recovery`; launch env: `CAVEMAN_HOME` (same company home).
+- Agent env injected: `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`, `DO_NOT_TRACK=1`. MCP server name: `caveman` (must match upstream's recovery-tool allowlist, `mcp__caveman__caveman_retrieve`); launch env: `CAVEMAN_HOME` (same company home), `CAVEMAN_CCR_DB=<home>/ccr.db`, `CAVEMAN_MCP_EPHEMERAL=0`. Proxy env also sets `CAVEMAN_CACHE_WARM=off`, `CAVEMAN_OFFLINE=1`, `CAVEMAN_CCR_DB`.
 - Binary lookup order: `CAVEMAN_PROXY_BIN` / `CAVEMAN_MCP_BIN`, then `PATH`, then `~/.caveman/bin`.
 - Eligible only when: setting is not `off`, `acpxAgent === "claude"`, execution target is local, binaries found, `ANTHROPIC_BASE_URL` not already set by adapter config or host env, no Bedrock flags.
 - Scope: ACP engine only. The Claude CLI engine stays direct and logs one line saying so.
@@ -116,7 +116,7 @@
   - `type CompressionSkipReason = "disabled" | "not-claude" | "remote-target" | "binaries-missing" | "base-url-pinned" | "bedrock" | "proxy-unavailable"`
   - `attachContextCompression(input: { config: Record<string, unknown>; companyId: string; instanceRoot: string; acpxAgent: string; executionTargetIsRemote: boolean; env: Record<string, string>; hostEnv: NodeJS.ProcessEnv; mcpServers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }>; onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void> | void; supervisor?: CompressionSupervisor; resolveBinaries?: typeof resolveCavemanBinaries }): Promise<{ attached: true; baseUrl: string } | { attached: false; reason: CompressionSkipReason }>`
 
-- [ ] **Step 1: Write failing tests** (fake supervisor and binaries): `attaches env and MCP server when eligible` (asserts `env.ANTHROPIC_BASE_URL`, `env.DO_NOT_TRACK`, one `Caveman recovery` server with `CAVEMAN_HOME`, and one `[paperclip] Context compression: on` log line); `skips with reason disabled when mode is off` (no log noise); `skips for non-claude agents`; `skips for remote targets`; `skips when env.ANTHROPIC_BASE_URL is already set`; `skips when host ANTHROPIC_BASE_URL is set`; `skips on Bedrock flags in env`; `logs exactly one warning and skips when binaries are missing`; `logs one warning and skips when the proxy is unavailable`; `record mode attaches env but no MCP server`; `never throws when the supervisor rejects`.
+- [ ] **Step 1: Write failing tests** (fake supervisor and binaries): `attaches env and MCP server when eligible` (asserts `env.ANTHROPIC_BASE_URL`, `env.DO_NOT_TRACK`, one `caveman` server with `CAVEMAN_HOME`, and one `[paperclip] Context compression: on` log line); `skips with reason disabled when mode is off` (no log noise); `skips for non-claude agents`; `skips for remote targets`; `skips when env.ANTHROPIC_BASE_URL is already set`; `skips when host ANTHROPIC_BASE_URL is set`; `skips on Bedrock flags in env`; `logs exactly one warning and skips when binaries are missing`; `logs one warning and skips when the proxy is unavailable`; `record mode attaches env but no MCP server`; `never throws when the supervisor rejects`.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement** `attachContextCompression`. Wrap supervisor and binary calls in try/catch that converts any throw into `proxy-unavailable`. MCP server `command` is `binaries.mcp`, `args` empty.
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -131,7 +131,7 @@
 **Interfaces:**
 - Consumes: `attachContextCompression` (Task 5).
 
-- [ ] **Step 1: Write failing tests** in the existing harness with a stubbed compression module: `passes ANTHROPIC_BASE_URL to the agent env when attached`; `adds the Caveman recovery server to ACP mcpServers`; `does not change the session fingerprint when only the port changes`; `runs direct and still succeeds when attach reports binaries-missing`; `does not attach for codex runs`.
+- [ ] **Step 1: Write failing tests** in the existing harness with a stubbed compression module: `passes ANTHROPIC_BASE_URL to the agent env when attached`; `adds the caveman recovery server to ACP mcpServers`; `does not change the session fingerprint when only the port changes`; `runs direct and still succeeds when attach reports binaries-missing`; `does not attach for codex runs`.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/adapter-utils/src/acpx-engine/execute.test.ts -t "Context compression"`. Expected: FAIL.
 - [ ] **Step 3: Implement** the call: pass `config`, `companyId: agent.companyId`, `instanceRoot: defaultPaperclipInstanceDir()`, `acpxAgent`, `executionTargetIsRemote`, `env`, `hostEnv: process.env`, `mcpServers`, `onLog`. Do not copy injected keys into `resolvedAdapterEnv`. Place the call before the `MCP_TOOL_TIMEOUT` block so it applies to the new server too.
 - [ ] **Step 4: Run** the full `execute.test.ts`. Expected: PASS with no regressions.

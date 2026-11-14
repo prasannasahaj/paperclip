@@ -7,7 +7,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CavemanBinaries } from "./binaries.js";
 import { resolveCompressionHome } from "./company-home.js";
-import { PROXY_ENV_ALLOWLIST, createCompressionSupervisor, waitForLoopbackListen } from "./supervisor.js";
+import {
+  PROXY_ENV_ALLOWLIST,
+  createCompressionSupervisor as createSupervisorWithRealProbe,
+  probeLoopbackOnce,
+  waitForLoopbackListen,
+  type CompressionSupervisorDeps,
+} from "./supervisor.js";
 
 const BINARIES: CavemanBinaries = { proxy: "/fake/caveman-proxy", mcp: "/fake/caveman-mcp" };
 const LOOPBACK = "127.0.0.1";
@@ -35,6 +41,10 @@ function createFakeSpawn() {
 
 function spawnedEnv(spawnProcess: ReturnType<typeof createFakeSpawn>["spawnProcess"], callIndex = 0) {
   return spawnProcess.mock.calls[callIndex][2].env as Record<string, string | undefined>;
+}
+
+function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}) {
+  return createSupervisorWithRealProbe({ probeLoopback: async () => true, ...deps });
 }
 
 function deferred<T>() {
@@ -78,6 +88,9 @@ describe("createCompressionSupervisor", () => {
     expect(env.CAVEMAN_MODE).toBe("compress");
     expect(env.CAVEMAN_RECOVERY).toBe("mcp");
     expect(env.DO_NOT_TRACK).toBe("1");
+    expect(env.CAVEMAN_CACHE_WARM).toBe("off");
+    expect(env.CAVEMAN_OFFLINE).toBe("1");
+    expect(env.CAVEMAN_CCR_DB).toBe(path.join(home, "ccr.db"));
     expect(availability).toEqual({
       available: true,
       baseUrl: `http://${env.CAVEMAN_LISTEN}`,
@@ -128,6 +141,30 @@ describe("createCompressionSupervisor", () => {
     expect((await second).available).toBe(false);
   });
 
+  it("overrides cache warming, offline and store settings inherited from the server", async () => {
+    const inherited = {
+      CAVEMAN_CACHE_WARM: "on",
+      CAVEMAN_OFFLINE: "0",
+      CAVEMAN_CCR_DB: "/elsewhere/ccr.db",
+      CAVEMAN_MCP_EPHEMERAL: "1",
+    };
+    for (const [key, value] of Object.entries(inherited)) vi.stubEnv(key, value);
+    try {
+      const fake = createFakeSpawn();
+      const supervisor = createCompressionSupervisor({ spawn: fake.asSpawn, waitForListen: async () => true });
+
+      await supervisor.ensureRunning(ensureInput());
+
+      const env = spawnedEnv(fake.spawnProcess);
+      expect(env.CAVEMAN_CACHE_WARM).toBe("off");
+      expect(env.CAVEMAN_OFFLINE).toBe("1");
+      expect(env.CAVEMAN_CCR_DB).toBe(path.join(resolveCompressionHome(instanceRoot, "company-1"), "ccr.db"));
+      expect(env.CAVEMAN_MCP_EPHEMERAL).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("passes only allowlisted parent env keys to the proxy", async () => {
     const parentSecrets = { DATABASE_URL: "postgres://secret", ANTHROPIC_API_KEY: "sk-secret", CAVEMAN_AUTH_TOKEN: "cloud-token" };
     for (const [key, value] of Object.entries(parentSecrets)) vi.stubEnv(key, value);
@@ -145,7 +182,17 @@ describe("createCompressionSupervisor", () => {
       for (const key of Object.keys(parentSecrets)) expect(env[key]).toBeUndefined();
       for (const key of PROXY_ENV_ALLOWLIST) expect(env[key]).toBe(`parent-${key}`);
       expect(Object.keys(env).sort()).toEqual(
-        [...PROXY_ENV_ALLOWLIST, "CAVEMAN_HOME", "CAVEMAN_LISTEN", "CAVEMAN_MODE", "CAVEMAN_RECOVERY", "DO_NOT_TRACK"].sort(),
+        [
+          ...PROXY_ENV_ALLOWLIST,
+          "CAVEMAN_CACHE_WARM",
+          "CAVEMAN_CCR_DB",
+          "CAVEMAN_HOME",
+          "CAVEMAN_LISTEN",
+          "CAVEMAN_MODE",
+          "CAVEMAN_OFFLINE",
+          "CAVEMAN_RECOVERY",
+          "DO_NOT_TRACK",
+        ].sort(),
       );
     } finally {
       vi.unstubAllEnvs();
@@ -201,12 +248,14 @@ describe("createCompressionSupervisor", () => {
       expect(env.CAVEMAN_MODE).toBe("record");
       expect(env.CAVEMAN_RECOVERY).toBeUndefined();
       expect(env.DO_NOT_TRACK).toBe("1");
+      expect(env.CAVEMAN_CACHE_WARM).toBe("off");
+      expect(env.CAVEMAN_OFFLINE).toBe("1");
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  it("sends proxy output to proxy.log in the company home", async () => {
+  it("ignores proxy stdout and sends stderr to proxy.stderr.log, leaving proxy.log to the proxy itself", async () => {
     const fake = createFakeSpawn();
     const supervisor = createCompressionSupervisor({
       spawn: fake.asSpawn,
@@ -217,11 +266,14 @@ describe("createCompressionSupervisor", () => {
 
     const stdio = fake.spawnProcess.mock.calls[0][2].stdio as unknown[];
     expect(stdio[0]).toBe("ignore");
-    expect(typeof stdio[1]).toBe("number");
-    expect(stdio[2]).toBe(stdio[1]);
+    expect(stdio[1]).toBe("ignore");
+    expect(typeof stdio[2]).toBe("number");
     const home = resolveCompressionHome(instanceRoot, "company-1");
-    expect((await stat(path.join(home, "proxy.log"))).isFile()).toBe(true);
-    expect(await readFile(path.join(home, "proxy.log"), "utf8")).toBe("");
+    const stderrLog = path.join(home, "proxy.stderr.log");
+    expect((await stat(stderrLog)).isFile()).toBe(true);
+    expect((await stat(stderrLog)).mode & 0o777).toBe(0o600);
+    expect(await readFile(stderrLog, "utf8")).toBe("");
+    await expect(stat(path.join(home, "proxy.log"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("concurrent ensureRunning calls spawn exactly once", async () => {
@@ -255,6 +307,101 @@ describe("createCompressionSupervisor", () => {
 
     expect(fake.spawnProcess).toHaveBeenCalledTimes(1);
     expect(second).toEqual(first);
+  });
+
+  describe("reusing a live child", () => {
+    function createWedgeableSupervisor() {
+      const fake = createFakeSpawn();
+      const probeLoopback = vi.fn<(port: number, timeoutMs: number) => Promise<boolean>>(async () => true);
+      const supervisor = createSupervisorWithRealProbe({
+        spawn: fake.asSpawn,
+        waitForListen: async () => true,
+        probeLoopback,
+      });
+      return { fake, probeLoopback, supervisor };
+    }
+
+    it("probes the live child once with a short timeout and reuses it when it answers", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      const first = await supervisor.ensureRunning(ensureInput());
+      const port = Number(new URL(first.available ? first.baseUrl : "http://x:0").port);
+
+      const second = await supervisor.ensureRunning(ensureInput());
+
+      expect(second).toEqual(first);
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(1);
+      expect(probeLoopback).toHaveBeenCalledTimes(1);
+      expect(probeLoopback).toHaveBeenCalledWith(port, expect.any(Number));
+      expect(probeLoopback.mock.calls[0][1]).toBeLessThanOrEqual(1000);
+      expect(fake.children[0].kill).not.toHaveBeenCalled();
+    });
+
+    it("terminates a live child that does not answer and starts a fresh one", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      await supervisor.ensureRunning(ensureInput());
+      probeLoopback.mockResolvedValueOnce(false);
+
+      const second = await supervisor.ensureRunning(ensureInput());
+
+      expect(second.available).toBe(true);
+      expect(fake.children[0].kill).toHaveBeenCalledTimes(1);
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(2);
+    });
+
+    it("treats a probe that throws as a wedged child", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      await supervisor.ensureRunning(ensureInput());
+      probeLoopback.mockRejectedValueOnce(new Error("probe blew up"));
+
+      const second = await supervisor.ensureRunning(ensureInput());
+
+      expect(second.available).toBe(true);
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(2);
+    });
+
+    it("lets two concurrent callers share one probe and one restart of a wedged child", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      await supervisor.ensureRunning(ensureInput());
+      const verdict = deferred<boolean>();
+      probeLoopback.mockReturnValueOnce(verdict.promise);
+
+      const first = supervisor.ensureRunning(ensureInput());
+      const second = supervisor.ensureRunning(ensureInput());
+      verdict.resolve(false);
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.available).toBe(true);
+      expect(secondResult).toEqual(firstResult);
+      expect(probeLoopback).toHaveBeenCalledTimes(1);
+      expect(fake.children[0].kill).toHaveBeenCalledTimes(1);
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not restart when stopAll runs while the probe is in flight", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      await supervisor.ensureRunning(ensureInput());
+      const verdict = deferred<boolean>();
+      probeLoopback.mockReturnValueOnce(verdict.promise);
+
+      const pending = supervisor.ensureRunning(ensureInput());
+      const stopping = supervisor.stopAll();
+      verdict.resolve(false);
+
+      expect((await pending).available).toBe(false);
+      await stopping;
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not probe a child that already exited, it just respawns", async () => {
+      const { fake, probeLoopback, supervisor } = createWedgeableSupervisor();
+      await supervisor.ensureRunning(ensureInput());
+      fake.children[0].emit("exit", 1, null);
+
+      await supervisor.ensureRunning(ensureInput());
+
+      expect(probeLoopback).not.toHaveBeenCalled();
+      expect(fake.spawnProcess).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("respawns on the same port after the child exited", async () => {
@@ -532,5 +679,29 @@ describe("waitForLoopbackListen", () => {
     await new Promise<void>((resolve) => probe.close(() => resolve()));
 
     await expect(waitForLoopbackListen(port, 200)).resolves.toBe(false);
+  });
+});
+
+describe("probeLoopbackOnce", () => {
+  it("resolves true when something accepts a connection", async () => {
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, LOOPBACK, () => resolve()));
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      await expect(probeLoopbackOnce(port, 1000)).resolves.toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("resolves false at once when the connection is refused, without retrying", async () => {
+    const probe = net.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, LOOPBACK, () => resolve()));
+    const { port } = probe.address() as net.AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const startedAt = Date.now();
+    await expect(probeLoopbackOnce(port, 2000)).resolves.toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const PORT_FILE_NAME = "port.json";
+const RECOVERY_STORE_FILE_NAME = "ccr.db";
 const HOME_DIRECTORY_MODE = 0o700;
 const PORT_FILE_MODE = 0o600;
 const MIN_PORT = 1;
@@ -19,6 +20,10 @@ export function resolveCompressionHome(instanceRoot: string, companyId: string):
     throw new Error(`Invalid companyId for context compression home: ${JSON.stringify(companyId)}`);
   }
   return path.join(instanceRoot, "companies", companyId, "context-compression");
+}
+
+export function resolveRecoveryStorePath(home: string): string {
+  return path.join(home, RECOVERY_STORE_FILE_NAME);
 }
 
 function isValidPort(value: unknown): value is number {
