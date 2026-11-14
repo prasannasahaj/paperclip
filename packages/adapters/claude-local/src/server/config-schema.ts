@@ -23,6 +23,18 @@ export function getConfigSchema(): AdapterConfigSchema {
         hint: "Default uses ACP. If ACP is unavailable, the run fails with a setup error. Choose CLI explicitly to use it.",
       },
       {
+        key: "contextCompression",
+        label: "Context compression",
+        type: "select",
+        default: "on",
+        options: [
+          { value: "on", label: "On" },
+          { value: "record", label: "Record only (measure, no changes)" },
+          { value: "off", label: "Off" },
+        ],
+        hint: "Routes local Claude (ACP) traffic through a per-company Caveman proxy. If the proxy binaries are missing, runs go direct.",
+      },
+      {
         key: "agentCommand",
         label: "ACP server command",
         type: "text",
