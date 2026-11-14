@@ -79,9 +79,32 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export const PROXY_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "SystemRoot",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+] as const;
+
 function buildProxyEnv(input: { home: string; port: number; mode: EnsureRunningInput["mode"] }): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.CAVEMAN_RECOVERY;
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of PROXY_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
   env.CAVEMAN_HOME = input.home;
   env.CAVEMAN_LISTEN = `${LOOPBACK_HOST}:${input.port}`;
   env.CAVEMAN_MODE = input.mode === "record" ? "record" : "compress";
@@ -212,12 +235,12 @@ export function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}
 
   return {
     async ensureRunning(input) {
+      const pendingStart = startByCompany.get(input.companyId);
+      if (pendingStart) return pendingStart;
+
       const running = proxyByCompany.get(input.companyId);
       if (running && !running.exited) return toAvailability(running);
       if (running) proxyByCompany.delete(input.companyId);
-
-      const pendingStart = startByCompany.get(input.companyId);
-      if (pendingStart) return pendingStart;
 
       const start = startProxy(input);
       startByCompany.set(input.companyId, start);

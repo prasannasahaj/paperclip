@@ -7,7 +7,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CavemanBinaries } from "./binaries.js";
 import { resolveCompressionHome } from "./company-home.js";
-import { createCompressionSupervisor, waitForLoopbackListen } from "./supervisor.js";
+import { PROXY_ENV_ALLOWLIST, createCompressionSupervisor, waitForLoopbackListen } from "./supervisor.js";
 
 const BINARIES: CavemanBinaries = { proxy: "/fake/caveman-proxy", mcp: "/fake/caveman-mcp" };
 const LOOPBACK = "127.0.0.1";
@@ -84,6 +84,72 @@ describe("createCompressionSupervisor", () => {
       home,
       mode: "on",
     });
+  });
+
+  it("a second caller arriving mid-start waits for the listen and gets the same result", async () => {
+    const fake = createFakeSpawn();
+    const listening = deferred<boolean>();
+    const supervisor = createCompressionSupervisor({
+      spawn: fake.asSpawn,
+      waitForListen: () => listening.promise,
+    });
+
+    const first = supervisor.ensureRunning(ensureInput());
+    await vi.waitFor(() => expect(fake.spawnProcess).toHaveBeenCalledTimes(1));
+    let secondSettled = false;
+    const second = supervisor.ensureRunning(ensureInput()).then((result) => {
+      secondSettled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(secondSettled).toBe(false);
+    listening.resolve(true);
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(secondResult).toEqual(firstResult);
+    expect(secondResult.available).toBe(true);
+    expect(fake.spawnProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second caller arriving mid-start gets unavailable when the start fails", async () => {
+    const fake = createFakeSpawn();
+    const firstListen = deferred<boolean>();
+    const waitForListen = vi.fn<(port: number, timeoutMs: number) => Promise<boolean>>()
+      .mockReturnValueOnce(firstListen.promise)
+      .mockResolvedValue(false);
+    const supervisor = createCompressionSupervisor({ spawn: fake.asSpawn, waitForListen });
+
+    const first = supervisor.ensureRunning(ensureInput());
+    await vi.waitFor(() => expect(fake.spawnProcess).toHaveBeenCalledTimes(1));
+    const second = supervisor.ensureRunning(ensureInput());
+    firstListen.resolve(false);
+
+    expect((await first).available).toBe(false);
+    expect((await second).available).toBe(false);
+  });
+
+  it("passes only allowlisted parent env keys to the proxy", async () => {
+    const parentSecrets = { DATABASE_URL: "postgres://secret", ANTHROPIC_API_KEY: "sk-secret", CAVEMAN_AUTH_TOKEN: "cloud-token" };
+    for (const [key, value] of Object.entries(parentSecrets)) vi.stubEnv(key, value);
+    for (const key of PROXY_ENV_ALLOWLIST) vi.stubEnv(key, `parent-${key}`);
+    try {
+      const fake = createFakeSpawn();
+      const supervisor = createCompressionSupervisor({
+        spawn: fake.asSpawn,
+        waitForListen: async () => true,
+      });
+
+      await supervisor.ensureRunning(ensureInput());
+
+      const env = spawnedEnv(fake.spawnProcess);
+      for (const key of Object.keys(parentSecrets)) expect(env[key]).toBeUndefined();
+      for (const key of PROXY_ENV_ALLOWLIST) expect(env[key]).toBe(`parent-${key}`);
+      expect(Object.keys(env).sort()).toEqual(
+        [...PROXY_ENV_ALLOWLIST, "CAVEMAN_HOME", "CAVEMAN_LISTEN", "CAVEMAN_MODE", "CAVEMAN_RECOVERY", "DO_NOT_TRACK"].sort(),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("reports the mode the proxy was started with on first call", async () => {
