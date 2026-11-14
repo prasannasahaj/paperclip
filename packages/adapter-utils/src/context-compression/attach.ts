@@ -27,7 +27,7 @@ export interface AttachContextCompressionInput {
   executionTargetIsRemote: boolean;
   env: Record<string, string>;
   hostEnv: NodeJS.ProcessEnv;
-  mcpServers: CompressionMcpServer[];
+  mcpServers: Array<CompressionMcpServer | { name: string }>;
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void> | void;
   supervisor?: CompressionSupervisor;
   resolveBinaries?: typeof resolveCavemanBinaries;

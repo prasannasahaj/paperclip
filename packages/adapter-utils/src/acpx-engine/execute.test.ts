@@ -27,6 +27,14 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async (importActual) => {
     startAdapterExecutionTargetProcessSessionBridge: vi.fn(actual.startAdapterExecutionTargetProcessSessionBridge),
   };
 });
+const contextCompression = vi.hoisted(() => ({
+  attach: vi.fn(),
+}));
+
+vi.mock("../context-compression/index.js", async (importActual) => {
+  const actual = await importActual<typeof import("../context-compression/index.js")>();
+  return { ...actual, attachContextCompression: contextCompression.attach };
+});
 import {
   buildAcpxRunSummary,
   createAcpxEngineExecutor,
@@ -70,6 +78,11 @@ async function makeTempRoot() {
   tempRoots.push(root);
   return root;
 }
+
+beforeEach(() => {
+  contextCompression.attach.mockReset();
+  contextCompression.attach.mockResolvedValue({ attached: false, reason: "disabled" });
+});
 
 afterEach(async () => {
   defaultGeminiTestHome = undefined;
@@ -3252,6 +3265,105 @@ describe("shared ACPX engine runtime behavior", () => {
       const run = await runExecutor(await claudeConfig({ enabled: true }));
       const env = run.meta[0]?.env as Record<string, string>;
       expect(env.MCP_TOOL_TIMEOUT).toBe(String(ACPX_CLAUDE_MCP_TOOL_TIMEOUT_MS));
+    });
+  });
+
+  describe("Context compression", () => {
+    const RECOVERY_SERVER_NAME = "Caveman recovery";
+
+    async function claudeConfig(overrides: Record<string, unknown> = {}) {
+      const root = await makeTempRoot();
+      return {
+        agent: "claude",
+        agentCommand: "node ./fake-acp.js",
+        cwd: root,
+        stateDir: path.join(root, "state"),
+        paperclipRuntimeSkills: [],
+        paperclipSkillSync: { desiredSkills: [] },
+        ...overrides,
+      };
+    }
+
+    function attachThroughProxyOnPort(port: number) {
+      contextCompression.attach.mockImplementation(async (input: {
+        env: Record<string, string>;
+        mcpServers: Array<Record<string, unknown>>;
+      }) => {
+        const baseUrl = `http://127.0.0.1:${port}`;
+        input.env.ANTHROPIC_BASE_URL = baseUrl;
+        input.env.DO_NOT_TRACK = "1";
+        input.mcpServers.push({
+          name: RECOVERY_SERVER_NAME,
+          command: "/opt/caveman/bin/caveman-mcp",
+          args: [],
+          env: [{ name: "CAVEMAN_HOME", value: "/tmp/caveman-home" }],
+        });
+        return { attached: true, baseUrl };
+      });
+    }
+
+    it("passes ANTHROPIC_BASE_URL to the agent env when attached", async () => {
+      attachThroughProxyOnPort(41001);
+      const run = await runExecutor(await claudeConfig());
+      const env = run.meta[0]?.env as Record<string, string>;
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:41001");
+      expect(env.DO_NOT_TRACK).toBe("1");
+      expect(contextCompression.attach).toHaveBeenCalledWith(expect.objectContaining({
+        companyId: "company-1",
+        acpxAgent: "claude",
+        executionTargetIsRemote: false,
+        hostEnv: process.env,
+      }));
+    });
+
+    it("adds the Caveman recovery server to ACP mcpServers", async () => {
+      attachThroughProxyOnPort(41001);
+      const run = await runExecutor(await claudeConfig());
+      const servers = run.runtimeOptions[0]?.mcpServers as Array<Record<string, unknown>>;
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({ name: RECOVERY_SERVER_NAME, command: "/opt/caveman/bin/caveman-mcp" });
+      const env = run.meta[0]?.env as Record<string, string>;
+      expect(env.MCP_TOOL_TIMEOUT).toBe(String(ACPX_CLAUDE_MCP_TOOL_TIMEOUT_MS));
+    });
+
+    it("does not change the session fingerprint when only the port changes", async () => {
+      const base = await claudeConfig();
+      const detached = await runExecutor(base);
+      attachThroughProxyOnPort(41001);
+      const firstPort = await runExecutor(base);
+      attachThroughProxyOnPort(52002);
+      const secondPort = await runExecutor(base);
+      const fingerprintOf = (run: { result: { sessionParams?: Record<string, unknown> | null } }) =>
+        run.result.sessionParams?.configFingerprint;
+      expect(fingerprintOf(firstPort)).toBeDefined();
+      expect(fingerprintOf(secondPort)).toBe(fingerprintOf(firstPort));
+      expect(fingerprintOf(firstPort)).toBe(fingerprintOf(detached));
+      expect(JSON.stringify(firstPort.result.sessionParams)).not.toContain("41001");
+    });
+
+    it("runs direct and still succeeds when attach reports binaries-missing", async () => {
+      contextCompression.attach.mockResolvedValue({ attached: false, reason: "binaries-missing" });
+      const run = await runExecutor(await claudeConfig());
+      const env = run.meta[0]?.env as Record<string, string>;
+      expect(run.result.exitCode).toBe(0);
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(env.DO_NOT_TRACK).toBeUndefined();
+      expect(run.runtimeOptions[0]?.mcpServers).toEqual([]);
+    });
+
+    it("does not attach for codex runs", async () => {
+      const { attachContextCompression } = await vi.importActual<typeof import("../context-compression/index.js")>(
+        "../context-compression/index.js",
+      );
+      const supervisor = { ensureRunning: vi.fn(), stopAll: vi.fn() };
+      contextCompression.attach.mockImplementation((input: Parameters<typeof attachContextCompression>[0]) =>
+        attachContextCompression({ ...input, supervisor }));
+      const config = { ...(await claudeConfig()), agent: "codex" };
+      const run = await runExecutor(config);
+      const env = run.meta[0]?.env as Record<string, string>;
+      expect(supervisor.ensureRunning).not.toHaveBeenCalled();
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(run.runtimeOptions[0]?.mcpServers).toEqual([]);
     });
   });
 

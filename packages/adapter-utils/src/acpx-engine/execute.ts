@@ -131,6 +131,7 @@ import {
   DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
 } from "./constants.js";
 import { buildPlaywrightBrowserLaunch, readPlaywrightBrowserConfig } from "./playwright-browser.js";
+import { attachContextCompression } from "../context-compression/index.js";
 import type {
   AcpRunContext,
   AcquiredRunResources,
@@ -2165,6 +2166,17 @@ async function buildRuntime(input: {
     stateDir,
     runId,
     env,
+    mcpServers,
+    onLog: input.ctx.onLog,
+  });
+  await attachContextCompression({
+    config,
+    companyId: agent.companyId,
+    instanceRoot: defaultPaperclipInstanceDir(),
+    acpxAgent,
+    executionTargetIsRemote,
+    env,
+    hostEnv: process.env,
     mcpServers,
     onLog: input.ctx.onLog,
   });
