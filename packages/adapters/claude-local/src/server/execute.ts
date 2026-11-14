@@ -57,6 +57,7 @@ import {
   DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE,
 } from "@paperclipai/adapter-utils/server-utils";
 import { buildSkillLibraryManifestMarkdown } from "@paperclipai/adapter-utils/skill-library-manifest";
+import { readContextCompressionMode } from "@paperclipai/adapter-utils/context-compression/index";
 import {
   parseLocalProcessFilesystemScope,
   parseLocalProcessSandboxExtraPaths,
@@ -408,6 +409,21 @@ export async function runClaudeLogin(input: {
   });
 }
 
+const CLI_ENGINE_RUNS_DIRECT_NOTICE =
+  "[paperclip] Context compression applies to the ACP engine only; this run goes direct.\n";
+
+async function noteCliEngineRunsDirect(
+  config: Record<string, unknown>,
+  onLog: AdapterExecutionContext["onLog"],
+): Promise<void> {
+  if (readContextCompressionMode(config) === "off") return;
+  try {
+    await onLog("stdout", CLI_ENGINE_RUNS_DIRECT_NOTICE);
+  } catch {
+    return;
+  }
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const providerStop = createProviderStoppedBoundary(ctx.onProviderStopped);
   const engineSelection = await resolveClaudeExecutionEngineForRun(ctx);
@@ -476,6 +492,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     authToken,
     onLog,
   });
+  await noteCliEngineRunsDirect(config, onLog);
   let {
     command,
     resolvedCommand,

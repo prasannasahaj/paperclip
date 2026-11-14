@@ -209,6 +209,7 @@ import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 import { conflict } from "./errors.js";
+import { getCompressionSupervisor } from "@paperclipai/adapter-utils/context-compression/index";
 import { ensureDecisionSigningSecret } from "./services/decision-signing.js";
 import { createDecisionRetentionNotifyOriginAgent, createDecisionWakeOriginAgent } from "./services/decision-wakeup.js";
 import {
@@ -2367,6 +2368,7 @@ async function startServerWithDatabaseTeardown(
       },
       closeHttpListener: () =>
         closeHttpListenerForShutdown({ server, signal, log: logger }),
+      stopCompressionProxies: () => getCompressionSupervisor().stopAll(),
       drainPendingRunFailureReports: waitForPendingRunFailureReports,
       // Mark the pool as ending before `sql.end()` rejects the first query,
       // so the error handler recognizes a request that outlived the drain.

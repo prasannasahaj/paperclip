@@ -80,7 +80,7 @@ function buildContext(config: Record<string, unknown> = {}) {
     },
     config: { model: "claude-opus-5", ...config },
     context: {},
-    onLog: vi.fn(async () => {}),
+    onLog: vi.fn(async (_stream: string, _chunk: string): Promise<void> => {}),
   };
 }
 
@@ -128,5 +128,84 @@ describe("claude_local ACP startup fallback", () => {
     await expect(execute(ctx as never)).rejects.toThrow('Unexpected "<<"');
 
     expect(runAdapterExecutionTargetProcess).not.toHaveBeenCalled();
+  });
+});
+
+describe("claude_local CLI engine context compression notice", () => {
+  const notice = "[paperclip] Context compression applies to the ACP engine only; this run goes direct.\n";
+
+  function noticeCalls(ctx: ReturnType<typeof buildContext>) {
+    return ctx.onLog.mock.calls.filter(([, chunk]) => String(chunk).includes("Context compression"));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("logs the direct-run notice exactly once when compression mode is on", async () => {
+    const ctx = buildContext({ engine: "cli", contextCompression: "on" });
+
+    await execute(ctx as never);
+
+    expect(noticeCalls(ctx)).toEqual([["stdout", notice]]);
+  });
+
+  it("logs the direct-run notice when compression mode is the default", async () => {
+    const ctx = buildContext({ engine: "cli" });
+
+    await execute(ctx as never);
+
+    expect(noticeCalls(ctx)).toEqual([["stdout", notice]]);
+  });
+
+  it("logs the direct-run notice when compression mode is record", async () => {
+    const ctx = buildContext({ engine: "cli", contextCompression: "record" });
+
+    await execute(ctx as never);
+
+    expect(noticeCalls(ctx)).toEqual([["stdout", notice]]);
+  });
+
+  it("logs nothing about compression when compression mode is off", async () => {
+    const ctx = buildContext({ engine: "cli", contextCompression: "off" });
+
+    await execute(ctx as never);
+
+    expect(noticeCalls(ctx)).toEqual([]);
+  });
+
+  it("does not point the CLI at a compression proxy", async () => {
+    const ctx = buildContext({ engine: "cli", contextCompression: "on" });
+
+    await execute(ctx as never);
+
+    const [, , , , options] = runAdapterExecutionTargetProcess.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      unknown,
+      unknown,
+      { env: Record<string, string> },
+    ];
+    expect(options.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+  });
+
+  it("still runs the CLI when the log sink rejects the notice", async () => {
+    const ctx = buildContext({ engine: "cli", contextCompression: "on" });
+    ctx.onLog.mockImplementation(async (_stream: string, chunk: string) => {
+      if (chunk.includes("Context compression")) throw new Error("log sink down");
+    });
+
+    await execute(ctx as never);
+
+    expect(runAdapterExecutionTargetProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not log the CLI notice on the ACP engine", async () => {
+    executeClaudeAcp.mockResolvedValueOnce({ exitCode: 0, signal: null, timedOut: false } as never);
+    const ctx = buildContext({ engine: "acp", contextCompression: "on" });
+
+    await execute(ctx as never);
+
+    expect(noticeCalls(ctx)).toEqual([]);
   });
 });

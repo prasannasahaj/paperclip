@@ -196,6 +196,7 @@ export async function finalizeServerShutdown(input: {
    * runs against a half-dismantled service or an ended pool.
    */
   closeHttpListener?: (() => Promise<unknown>) | null;
+  stopCompressionProxies?: (() => Promise<void>) | null;
   /**
    * Waits for every run-failure Sentry report still in flight. Runs after the
    * application services and before the database pool ends, so a report that
@@ -234,6 +235,14 @@ export async function finalizeServerShutdown(input: {
     await input.shutdownAppServices?.();
   } catch (err) {
     input.log.error({ err, signal }, "Application service shutdown failed");
+  }
+
+  if (input.stopCompressionProxies) {
+    try {
+      await input.stopCompressionProxies();
+    } catch (err) {
+      input.log.error({ err, signal }, "Context compression proxy shutdown failed");
+    }
   }
 
   // Wait for every in-flight run-failure Sentry report before the database

@@ -239,6 +239,56 @@ describe("finalizeServerShutdown", () => {
     );
   });
 
+  it("stops the compression proxies after the application services and before the database", async () => {
+    const order: string[] = [];
+
+    await finalizeServerShutdown({
+      signal: "SIGTERM",
+      shutdownAppServices: vi.fn(async () => {
+        order.push("appServices");
+      }),
+      stopCompressionProxies: vi.fn(async () => {
+        order.push("compressionProxies:stop");
+      }),
+      closeDatabase: vi.fn(async () => {
+        order.push("database:close");
+      }),
+      stopEmbeddedPostgres: null,
+      shutdownInstrumentation: vi.fn(async () => undefined),
+      shutdownSentry: vi.fn(async () => undefined),
+      log: stubLogger(),
+    });
+
+    expect(order).toEqual(["appServices", "compressionProxies:stop", "database:close"]);
+  });
+
+  it("logs a failed compression proxy stop and still closes the database and exits", async () => {
+    const stopError = new Error("proxy stop failed");
+    const closeDatabase = vi.fn(async () => undefined);
+    const shutdownSentry = vi.fn(async () => undefined);
+    const log = stubLogger();
+
+    await finalizeServerShutdown({
+      signal: "SIGTERM",
+      shutdownAppServices: vi.fn(async () => undefined),
+      stopCompressionProxies: vi.fn(async () => {
+        throw stopError;
+      }),
+      closeDatabase,
+      stopEmbeddedPostgres: null,
+      shutdownInstrumentation: vi.fn(async () => undefined),
+      shutdownSentry,
+      log,
+    });
+
+    expect(closeDatabase).toHaveBeenCalledOnce();
+    expect(shutdownSentry).toHaveBeenCalledOnce();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: stopError, signal: "SIGTERM" }),
+      "Context compression proxy shutdown failed",
+    );
+  });
+
   it("skips the database stop when no embedded PostgreSQL runs in this process", async () => {
     const shutdownAppServices = vi.fn(async () => undefined);
     const shutdownInstrumentation = vi.fn(async () => undefined);
