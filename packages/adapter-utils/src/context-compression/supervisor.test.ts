@@ -82,7 +82,42 @@ describe("createCompressionSupervisor", () => {
       available: true,
       baseUrl: `http://${env.CAVEMAN_LISTEN}`,
       home,
+      mode: "on",
     });
+  });
+
+  it("reports the mode the proxy was started with on first call", async () => {
+    const fake = createFakeSpawn();
+    const supervisor = createCompressionSupervisor({
+      spawn: fake.asSpawn,
+      waitForListen: async () => true,
+    });
+
+    const availability = await supervisor.ensureRunning(ensureInput({ mode: "record" }));
+
+    expect(availability.available && availability.mode).toBe("record");
+  });
+
+  it("reports the original mode when a later call asks for a different mode", async () => {
+    const onFirst = createFakeSpawn();
+    const onSupervisor = createCompressionSupervisor({
+      spawn: onFirst.asSpawn,
+      waitForListen: async () => true,
+    });
+    await onSupervisor.ensureRunning(ensureInput({ mode: "on" }));
+    const recordLater = await onSupervisor.ensureRunning(ensureInput({ mode: "record" }));
+    expect(recordLater.available && recordLater.mode).toBe("on");
+    expect(onFirst.spawnProcess).toHaveBeenCalledTimes(1);
+
+    const recordFirst = createFakeSpawn();
+    const recordSupervisor = createCompressionSupervisor({
+      spawn: recordFirst.asSpawn,
+      waitForListen: async () => true,
+    });
+    await recordSupervisor.ensureRunning(ensureInput({ mode: "record" }));
+    const onLater = await recordSupervisor.ensureRunning(ensureInput({ mode: "on" }));
+    expect(onLater.available && onLater.mode).toBe("record");
+    expect(recordFirst.spawnProcess).toHaveBeenCalledTimes(1);
   });
 
   it("mode record sets CAVEMAN_MODE=record and no CAVEMAN_RECOVERY", async () => {

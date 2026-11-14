@@ -6,14 +6,16 @@ import type { CavemanBinaries } from "./binaries.js";
 import { acquireCompressionPort, resolveCompressionHome } from "./company-home.js";
 import type { ContextCompressionMode } from "./config.js";
 
+export type CompressionProxyMode = Exclude<ContextCompressionMode, "off">;
+
 export type ProxyAvailability =
-  | { available: true; baseUrl: string; home: string }
+  | { available: true; baseUrl: string; home: string; mode: CompressionProxyMode }
   | { available: false; reason: string };
 
 export interface EnsureRunningInput {
   companyId: string;
   instanceRoot: string;
-  mode: Exclude<ContextCompressionMode, "off">;
+  mode: CompressionProxyMode;
   binaries: CavemanBinaries;
 }
 
@@ -31,6 +33,7 @@ interface RunningProxy {
   child: ChildProcess;
   port: number;
   home: string;
+  mode: CompressionProxyMode;
   exited: boolean;
   spawnFailure: string | null;
   whenExited: Promise<void>;
@@ -111,7 +114,7 @@ function toBaseUrl(port: number): string {
 }
 
 function toAvailability(proxy: RunningProxy): ProxyAvailability {
-  return { available: true, baseUrl: toBaseUrl(proxy.port), home: proxy.home };
+  return { available: true, baseUrl: toBaseUrl(proxy.port), home: proxy.home, mode: proxy.mode };
 }
 
 export function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}): CompressionSupervisor {
@@ -139,6 +142,7 @@ export function createCompressionSupervisor(deps: CompressionSupervisorDeps = {}
       child,
       port,
       home,
+      mode: input.mode,
       exited: false,
       spawnFailure: null,
       whenExited: new Promise<void>((resolve) => {
