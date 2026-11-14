@@ -175,9 +175,10 @@ Not handled:
 - **Subscription (non-API-key) auth through the proxy.** The design doc listed
   this as unverified; this integration has not been checked against it.
 - **Hard kills.** The proxy is stopped on graceful shutdown and on process
-  `exit`. A `SIGKILL` of the server skips both, so the proxy can outlive it.
-  The next start does not reuse a port that is still held and picks a new free
-  one.
+  `exit`. A `SIGKILL` of the server skips both, so the proxy can be left
+  running. The next start does not reuse a port that is still held and picks a
+  new free one. Not tested: this follows from the code, and an orphaned proxy
+  was not observed.
 
 ## Privacy
 
@@ -209,8 +210,9 @@ Suggested comparison:
 3. `record` mode gives the proxy's own usage capture (`caveman.db`) without
    changing requests, as a control.
 
-Expect most volume in `cached_input_tokens`; output is a small share, which is
-why the integration targets input rather than the response style. Cache
+On the local instance measured for the design doc, most volume was cached
+input and output was under 1%, which is why the integration targets input
+rather than the response style. Your mix may differ. Cache
 behavior, prompt differences, and task variance all move these numbers, so one
 before/after pair is weak evidence.
 
