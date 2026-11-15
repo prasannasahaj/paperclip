@@ -43,13 +43,14 @@ Sign in in the window that opens, then press Enter in the terminal. The file is 
 Use this when you need to sign in during a run, or when the in-memory browser's saved login keeps expiring. Start one Chrome with its own profile and let the agent attach to it:
 
 ```sh
-open -na "Google Chrome" --args --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 --user-data-dir=$HOME/.paperclip/qa-chrome
+open -na "Google Chrome" --args --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 --user-data-dir=$HOME/.paperclip/qa-chrome --use-mock-keychain --password-store=basic
 ```
 
 ```json
 { "browser": { "enabled": true, "cdpEndpoint": "http://127.0.0.1:9333" } }
 ```
 
+- `--use-mock-keychain --password-store=basic` stop Chrome asking the macOS Keychain for "Chrome Safe Storage". Without them, a fresh profile can raise a "Keychain Not Found" dialog on every launch. Playwright's own launches already pass the mock-keychain flag.
 - Sign in once in that window. The profile persists, so you repeat it only when the Auth0 session expires.
 - With `cdpEndpoint` set, the run no longer uses `--isolated`, `--headless` or `storageStatePath`. `headed` has no effect: the browser is whatever you started.
 - Parallel runs share this one browser and its tabs.
