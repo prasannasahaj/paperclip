@@ -16,6 +16,9 @@ const ENABLED: PlaywrightBrowserConfig = {
   storageStatePath: null,
   cdpEndpoint: null,
   allowedOrigins: [],
+  mockNetwork: false,
+  initScripts: [],
+  initPages: [],
 };
 
 describe("readPlaywrightBrowserConfig", () => {
@@ -36,6 +39,9 @@ describe("readPlaywrightBrowserConfig", () => {
       storageStatePath: null,
       cdpEndpoint: null,
       allowedOrigins: [],
+      mockNetwork: false,
+      initScripts: [],
+      initPages: [],
     });
   });
 
@@ -48,6 +54,9 @@ describe("readPlaywrightBrowserConfig", () => {
         storageStatePath: " /tmp/login.json ",
         cdpEndpoint: " http://localhost:9222 ",
         allowedOrigins: ["http://localhost:3000", "", 7],
+        mockNetwork: true,
+        initScripts: [" /qa/session.js ", "", 3],
+        initPages: ["/qa/stubs.ts"],
       },
     });
     expect(config).toEqual({
@@ -57,7 +66,14 @@ describe("readPlaywrightBrowserConfig", () => {
       storageStatePath: "/tmp/login.json",
       cdpEndpoint: "http://localhost:9222",
       allowedOrigins: ["http://localhost:3000"],
+      mockNetwork: true,
+      initScripts: ["/qa/session.js"],
+      initPages: ["/qa/stubs.ts"],
     });
+  });
+
+  it("enables network mocking only when mockNetwork is exactly true", () => {
+    expect(readPlaywrightBrowserConfig({ browser: { enabled: true, mockNetwork: "true" } }).mockNetwork).toBe(false);
   });
 });
 
@@ -150,6 +166,41 @@ describe("buildPlaywrightBrowserLaunch", () => {
     expect(server.args[server.args.indexOf("--allowed-origins") + 1]).toBe(
       "http://localhost:3000;https://qa.example.com",
     );
+  });
+
+  it("offers no network mocking tool unless the agent asks for it", () => {
+    const { args } = launch(ENABLED).server;
+    expect(args).not.toContain("--caps");
+    expect(args).not.toContain("--init-script");
+    expect(args).not.toContain("--init-page");
+  });
+
+  it("enables the browser_route mocking tool when mockNetwork is set", () => {
+    const { args } = launch({ ...ENABLED, mockNetwork: true }).server;
+    expect(args[args.indexOf("--caps") + 1]).toBe("network");
+  });
+
+  it("passes each init script and init page as its own flag so one cannot swallow the next argument", () => {
+    const { args } = launch({
+      ...ENABLED,
+      initScripts: ["/qa/session.js", "/qa/clock.js"],
+      initPages: ["/qa/stubs.ts"],
+    }).server;
+    const valuesOf = (flag: string) =>
+      args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []));
+    expect(valuesOf("--init-script")).toEqual(["/qa/session.js", "/qa/clock.js"]);
+    expect(valuesOf("--init-page")).toEqual(["/qa/stubs.ts"]);
+  });
+
+  it("applies stubs to an attached browser as well", () => {
+    const { args } = launch({
+      ...ENABLED,
+      cdpEndpoint: "http://localhost:9222",
+      mockNetwork: true,
+      initPages: ["/qa/stubs.ts"],
+    }).server;
+    expect(args[args.indexOf("--caps") + 1]).toBe("network");
+    expect(args[args.indexOf("--init-page") + 1]).toBe("/qa/stubs.ts");
   });
 
   it("forwards only PATH, HOME and the socket directory to the browser process", () => {

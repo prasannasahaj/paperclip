@@ -24,6 +24,9 @@ QA agents verify finished work in a real browser through a Playwright MCP server
 | `storageStatePath` | `<instance root>/qa-browser/storage-state.json` | Saved login to restore. |
 | `cdpEndpoint` | none | Attach to a browser you already run instead of starting an in-memory one. See [Attach to a long-lived QA Chrome](#attach-to-a-long-lived-qa-chrome). |
 | `allowedOrigins` | none | Origins the browser may request. Not a security boundary: redirects are not covered. |
+| `mockNetwork` | `false` | Give the agent the `browser_route` tool (Playwright MCP `--caps network`) to mock requests by URL pattern during a run. |
+| `initScripts` | none | JavaScript files evaluated in every page before the page's own scripts. Use them to fake a signed-in session. |
+| `initPages` | none | TypeScript files that default-export `async ({ page }) => {}`. Use them to register many `page.route` stubs before the run starts. |
 
 Remove the legacy `chrome: true` setting from the agent; the QA Verifier's ACP runs exposed no Chrome tools with it (run `f5f80d24`).
 
@@ -53,6 +56,37 @@ open -na "Google Chrome" --args --remote-debugging-port=9333 --remote-debugging-
 - Use `127.0.0.1` rather than `localhost` in the endpoint, and pick a port nothing else holds. On a host where your everyday Chrome already listens on `127.0.0.1:9222`, a QA Chrome on 9222 binds only IPv6 and `localhost` can resolve to the wrong browser.
 - Keep the debugging port bound to localhost and keep only QA logins in the profile. Anything that can reach the port controls the browser.
 - If nothing is listening on the endpoint, the browser tools fail at the first call.
+
+## Stub the network instead of signing in
+
+Large applications need many setup steps before the screen under test: sign-in, seeded records, feature flags. The QA browser can skip them by serving the page against stubbed API responses.
+
+```json
+{
+  "browser": {
+    "enabled": true,
+    "mockNetwork": true,
+    "initScripts": ["/path/to/qa/session.js"],
+    "initPages": ["/path/to/qa/stubs.ts"]
+  }
+}
+```
+
+```ts
+export default async ({ page }) => {
+  await page.route("**/api/campaigns/*", (route) =>
+    route.fulfill({ json: { id: "c1", name: "Stubbed campaign", strategies: [] } }),
+  );
+  await page.route("**/api/**", (route) => route.fulfill({ status: 599, body: "unstubbed" }));
+};
+```
+
+- Playwright runs routes in reverse registration order, so register the catch-all first and the specific stubs after it.
+- `session.js` sets whatever the app reads to decide it is signed in (a cookie, a local storage token) before the app starts. An app that validates tokens against an identity provider also needs that provider's discovery and key endpoints stubbed.
+- The agent deep-links to the page under test. With `mockNetwork` on it can also add or change a stub mid-run with `browser_route`.
+- Stubs run in the browser. A server-rendered app fetches its data on the server, so browser stubs never see those calls; stub that app's backend instead.
+- A pass against stubs proves how the UI renders the data it is given. It does not prove the real endpoints return that shape. The verdict must say "UI against stubs" and list the stubbed URLs, and one unstubbed journey per feature is still needed for acceptance.
+- The paths are read when the run starts. Keep stub files in the workspace the agent is verifying, not in a shared location, so they travel with the change they describe.
 
 ## Handoff and test data
 
