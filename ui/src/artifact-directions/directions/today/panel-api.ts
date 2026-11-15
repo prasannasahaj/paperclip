@@ -82,6 +82,7 @@ registerApiRoute((pathname) => {
   const rest = match[2];
   if (rest === "attachments") return [];
   if (rest === "work-products") return workProducts(artifacts);
+  if (rest === "tree-deliverables") return { rootIssueId: match[1], tasks: [], omitted: { tasks: false, workProducts: false, documents: false } };
   if (rest === "documents") return documents(artifacts);
   if (rest === "runs") return runs(artifacts);
   const annotation = /^documents\/([^/]+)\/annotations$/.exec(rest);

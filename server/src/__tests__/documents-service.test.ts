@@ -51,21 +51,23 @@ describeEmbeddedPostgres("documentService system issue documents", () => {
     await tempDb?.cleanup();
   });
 
-  async function createIssueWithDocuments() {
-    const companyId = randomUUID();
+  async function createIssueWithDocuments(identifier = "PAP-1600", existingCompanyId?: string) {
+    const companyId = existingCompanyId ?? randomUUID();
     const issueId = randomUUID();
 
-    await db.insert(companies).values({
-      id: companyId,
-      name: "Paperclip",
-      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
+    if (!existingCompanyId) {
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      });
+    }
 
     await db.insert(issues).values({
       id: issueId,
       companyId,
-      identifier: "PAP-1600",
+      identifier,
       title: "System document filtering",
       description: "Validate document filtering",
       status: "in_progress",
@@ -100,6 +102,36 @@ describeEmbeddedPostgres("documentService system issue documents", () => {
     const payload = await svc.getIssueDocumentPayload({ id: issueId, description: null });
     expect(payload.planDocument?.key).toBe("plan");
     expect(payload.documentSummaries.map((doc) => doc.key)).toEqual(["plan"]);
+  });
+
+  it("listIssueDocumentSummariesForIssues omits system keys by default and never returns a body", async () => {
+    const first = await createIssueWithDocuments();
+    const second = await createIssueWithDocuments("PAP-1601", first.companyId);
+    const unlisted = await createIssueWithDocuments("PAP-1602", first.companyId);
+
+    const summaries = await svc.listIssueDocumentSummariesForIssues(first.companyId, [first.issueId, second.issueId]);
+
+    expect(summaries.map((doc) => [doc.issueId, doc.key]).sort()).toEqual(
+      [[first.issueId, "plan"], [second.issueId, "plan"]].sort(),
+    );
+    expect(summaries.some((doc) => doc.issueId === unlisted.issueId)).toBe(false);
+    for (const summary of summaries) {
+      expect(summary).not.toHaveProperty("body");
+      expect(summary).not.toHaveProperty("latestBody");
+    }
+
+    const withSystem = await svc.listIssueDocumentSummariesForIssues(first.companyId, [first.issueId], { includeSystem: true });
+    expect(withSystem.map((doc) => doc.key)).toEqual([ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY, "plan"]);
+    expect(await svc.listIssueDocumentSummariesForIssues(first.companyId, [])).toEqual([]);
+  });
+
+  it("listIssueDocumentSummariesForIssues never returns a row from another company for a listed issue id", async () => {
+    const own = await createIssueWithDocuments("PAP-1600");
+    const foreign = await createIssueWithDocuments("PAP-1601");
+
+    const summaries = await svc.listIssueDocumentSummariesForIssues(own.companyId, [own.issueId, foreign.issueId]);
+
+    expect(summaries.map((doc) => doc.issueId)).toEqual([own.issueId]);
   });
 
   it("reads one pinned revision and never substitutes a newer or unrelated document", async () => {

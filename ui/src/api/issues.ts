@@ -40,6 +40,7 @@ import type {
   IssueTreeControlPreview,
   IssueTreeHold,
   IssueWatchdog,
+  IssueTreeDeliverables,
   IssueWorkProduct,
   RunnerGoalActionAccepted,
   RunnerGoalActionRequest,
@@ -842,6 +843,8 @@ export const issuesApi = {
     if (options?.fresh) detachInflightGet(path);
     return api.get<IssueWorkProduct[]>(path, { signal: options?.signal });
   },
+  listTreeDeliverables: (id: string, options?: { signal?: AbortSignal }) =>
+    api.get<IssueTreeDeliverables>(`/issues/${id}/tree-deliverables`, { signal: options?.signal }),
   ensureWorkProductReviewDocument: (id: string, workProductId: string) =>
     api.post<IssueDocument>(
       `/issues/${id}/work-products/${workProductId}/review-document`,

@@ -1147,6 +1147,8 @@ export type {
   IssueWorkProductProvider,
   IssueWorkProductStatus,
   IssueWorkProductReviewState,
+  IssueTreeDeliverableTask,
+  IssueTreeDeliverables,
   CompanyArtifact,
   CompanyArtifactAgentSummary,
   CompanyArtifactGroup,

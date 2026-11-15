@@ -716,6 +716,10 @@ export type {
   CommitWorkProductMetadata,
 } from "./work-product.js";
 export type {
+  IssueTreeDeliverableTask,
+  IssueTreeDeliverables,
+} from "./issue-tree-deliverables.js";
+export type {
   CompanyArtifact,
   CompanyArtifactAgentSummary,
   CompanyArtifactGroup,

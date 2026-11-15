@@ -82,6 +82,7 @@ const apiPrefixes: Record<string, string> = {
   "issues.ts": "/api",
   "issue-document-batch.ts": "/api",
   "issue-tree-control.ts": "/api",
+  "issue-tree-deliverables.ts": "/api",
   "llms.ts": "/api",
   "link-previews.ts": "/api",
   "managed-agent-profiles.ts": "/api",

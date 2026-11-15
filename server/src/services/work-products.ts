@@ -216,6 +216,21 @@ export function workProductService(
 ) {
   const resolvePullRequestDetails = opts.resolvePullRequestDetails ?? createPullRequestMergeDetailsResolver(db);
   const resolveCommitDetails = opts.resolveCommitDetails ?? createGitHubCommitDiffDetailsResolver(db);
+  const reconcileWithRuntimeServices = async (products: IssueWorkProduct[]): Promise<IssueWorkProduct[]> => {
+    const runtimeServiceIds = products
+      .map((product) => (product.type === "runtime_service" ? product.runtimeServiceId : null))
+      .filter((value): value is string => Boolean(value));
+    if (runtimeServiceIds.length === 0) return products;
+    return reconcileRuntimeServiceWorkProducts(products, await db
+      .select({
+        id: workspaceRuntimeServices.id,
+        url: workspaceRuntimeServices.url,
+        status: workspaceRuntimeServices.status,
+        healthStatus: workspaceRuntimeServices.healthStatus,
+      })
+      .from(workspaceRuntimeServices)
+      .where(inArray(workspaceRuntimeServices.id, [...new Set(runtimeServiceIds)])));
+  };
   return {
     listForIssue: async (issueId: string, options: { refreshPullRequests?: boolean } = {}) => {
       const rows = await db
@@ -223,24 +238,20 @@ export function workProductService(
         .from(issueWorkProducts)
         .where(eq(issueWorkProducts.issueId, issueId))
         .orderBy(desc(issueWorkProducts.isPrimary), desc(issueWorkProducts.updatedAt));
-      const products = rows.map(toIssueWorkProduct);
-      const runtimeServiceIds = products
-        .map((product) => (product.type === "runtime_service" ? product.runtimeServiceId : null))
-        .filter((value): value is string => Boolean(value));
-      const reconciled = runtimeServiceIds.length === 0
-        ? products
-        : reconcileRuntimeServiceWorkProducts(products, await db
-            .select({
-              id: workspaceRuntimeServices.id,
-              url: workspaceRuntimeServices.url,
-              status: workspaceRuntimeServices.status,
-              healthStatus: workspaceRuntimeServices.healthStatus,
-            })
-            .from(workspaceRuntimeServices)
-            .where(inArray(workspaceRuntimeServices.id, [...new Set(runtimeServiceIds)])));
+      const reconciled = await reconcileWithRuntimeServices(rows.map(toIssueWorkProduct));
       return options.refreshPullRequests
         ? refreshPullRequestWorkProductMetadata(reconciled, resolvePullRequestDetails)
         : reconciled;
+    },
+
+    listForIssues: async (companyId: string, issueIds: string[]): Promise<IssueWorkProduct[]> => {
+      if (issueIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(issueWorkProducts)
+        .where(and(eq(issueWorkProducts.companyId, companyId), inArray(issueWorkProducts.issueId, issueIds)))
+        .orderBy(desc(issueWorkProducts.isPrimary), desc(issueWorkProducts.updatedAt));
+      return reconcileWithRuntimeServices(rows.map(toIssueWorkProduct));
     },
 
     latestRunDiffSummary: async (runId: string): Promise<WorkProductDiffSummary | null> => {

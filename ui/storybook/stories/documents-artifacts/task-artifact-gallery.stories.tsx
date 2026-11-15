@@ -20,6 +20,7 @@ import manilaImage from "../../fixtures/artifact-media/manila-ledger.png?url";
 import nightImage from "../../fixtures/artifact-media/night-pills.png?url";
 
 const issue = createIssue({ id: "artifact-gallery-story", identifier: "DEMO-101", title: "Explore Paperclip Ships styles", status: "done" });
+const noSubTaskOutputs = { rootIssueId: issue.id, tasks: [], omitted: { tasks: false, workProducts: false, documents: false } };
 const date = new Date("2026-09-22T18:03:00Z");
 const media = [["Paper Trail", trail], ["Big Type", type], ["Ticket Board", tickets], ["Night Pills", night], ["Manila Ledger", manila]];
 function product(title: string, index: number, overrides: Partial<IssueWorkProduct> = {}): IssueWorkProduct {
@@ -55,6 +56,7 @@ function GalleryStory({ scenario = "videos", width = 480 }: { scenario?: Scenari
     const cache = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
     cache.setQueryData(queryKeys.issues.workProducts(issue.id), workProducts);
     cache.setQueryData(queryKeys.issues.attachments(issue.id), attachments);
+    cache.setQueryData(queryKeys.issues.treeDeliverables(issue.id), noSubTaskOutputs);
     cache.setQueryData([...queryKeys.issues.documents(issue.id), "list"], []);
     cache.setQueryData(queryKeys.issues.runs(issue.id), [
       { runId: "style-exploration", agentId: storybookAgents[0].id, startedAt: date },
@@ -112,6 +114,9 @@ const meta = {
       const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
       if (method === "GET" && url.pathname === `/api/issues/${issue.id}/work-products`) {
         return Response.json(workProductsForScenario(args.scenario));
+      }
+      if (method === "GET" && url.pathname === `/api/issues/${issue.id}/tree-deliverables`) {
+        return Response.json(noSubTaskOutputs);
       }
       return originalFetch(input, init);
     };

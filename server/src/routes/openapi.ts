@@ -1233,6 +1233,29 @@ const workTimelineQuerySchema = z
   })
   .strict();
 
+const issueTreeDeliverablesResponseSchema = z
+  .object({
+    rootIssueId: z.string(),
+    tasks: z.array(
+      z.object({
+        issueId: z.string(),
+        identifier: z.string().nullable(),
+        title: z.string(),
+        status: z.string(),
+        assigneeAgentId: z.string().nullable(),
+        depth: z.number().int(),
+        workProducts: z.array(z.record(z.string(), z.unknown())),
+        documents: z.array(z.record(z.string(), z.unknown())),
+      }),
+    ),
+    omitted: z.object({
+      tasks: z.boolean(),
+      workProducts: z.boolean(),
+      documents: z.boolean(),
+    }),
+  })
+  .strict();
+
 const workTimelineResponseSchema = z
   .object({
     actors: z.array(
@@ -4952,6 +4975,19 @@ registry.registerPath({
   description: "Read current documents for 1–200 comma-separated task UUIDs in one request. Company and task read permissions apply. Unreadable, hidden, foreign and nonexistent tasks are omitted; a readable task without this key returns document:null. Items follow first-requested ID order with duplicates removed. includeBody defaults to true; includeBody=false returns revision metadata and updatedAt without loading bodies, for cache validation. No break-glass access. Responses over 8 MiB fail with 413; split the IDs into smaller requests. Native helpers can use save_api_response then download_artifact to relay the complete batch without per-task calls. Verify every requested ID is present before treating the inventory as complete.",
   request: { params: z.object({ companyId: z.string().uuid() }), query: issueDocumentBatchQuerySchema },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 413: { description: "Split the document batch into smaller requests" }, 429: { description: "At most two active reads per actor and eight per server instance; retry after an active read finishes", headers: { "Retry-After": { schema: { type: "string", enum: ["1"] } } } } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/issues/{id}/tree-deliverables",
+  tags: ["issues"],
+  summary: "List work products and documents produced across an issue's sub-task tree",
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: r.ok(issueTreeDeliverablesResponseSchema),
+    401: r.unauthorized,
+    404: r.notFound,
+  },
 });
 
 registry.registerPath({

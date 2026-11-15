@@ -2,6 +2,7 @@ import { issues } from "@paperclipai/db";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
+import { issueWorkProducts } from "@paperclipai/db";
 import {
   enrichWorkProductMetadataWithDiff,
   refreshPullRequestWorkProductMetadata,
@@ -267,5 +268,88 @@ describe("workProductService", () => {
     expect(txSelect).toHaveBeenCalled();
     expect(txUpdate).toHaveBeenCalledTimes(2);
     expect(result?.reviewState).toBe("ready_for_review");
+  });
+});
+
+describe("workProductService.listForIssues", () => {
+  function batchedDb(options: {
+    workProductRows: unknown[];
+    runtimeServiceRows?: unknown[];
+  }) {
+    const orderBy = vi.fn(async () => options.workProductRows);
+    const workProductWhere = vi.fn((_condition: SQL) => ({ orderBy }));
+    const runtimeServiceWhere = vi.fn(async () => options.runtimeServiceRows ?? []);
+    const from = vi.fn((table: unknown) => ({
+      where: table === issueWorkProducts ? workProductWhere : runtimeServiceWhere,
+    }));
+    const select = vi.fn(() => ({ from }));
+    return { db: { select } as any, select, workProductWhere, runtimeServiceWhere };
+  }
+
+  it("returns products for several issues and none for unlisted issues", async () => {
+    const rows = [
+      createWorkProductRow({ id: "wp-a", issueId: "issue-a" }),
+      createWorkProductRow({ id: "wp-b", issueId: "issue-b" }),
+    ];
+    const { db, workProductWhere } = batchedDb({ workProductRows: rows });
+    const svc = workProductService(db);
+
+    const products = await svc.listForIssues("company-1", ["issue-a", "issue-b"]);
+
+    expect(products.map((product) => [product.id, product.issueId])).toEqual([
+      ["wp-a", "issue-a"],
+      ["wp-b", "issue-b"],
+    ]);
+    const statement = new PgDialect().sqlToQuery(workProductWhere.mock.calls[0]![0]);
+    expect(statement.sql).toContain(" in (");
+    expect(statement.params).toEqual(["company-1", "issue-a", "issue-b"]);
+  });
+
+  it("scopes the batched read to the company id", async () => {
+    const { db, workProductWhere } = batchedDb({ workProductRows: [] });
+
+    await workProductService(db).listForIssues("company-1", ["issue-a"]);
+
+    const statement = new PgDialect().sqlToQuery(workProductWhere.mock.calls[0]![0]);
+    expect(statement.sql).toContain('"issue_work_products"."company_id" = $1');
+    expect(statement.params[0]).toBe("company-1");
+  });
+
+  it("returns an empty list without querying when no issue ids are given", async () => {
+    const { db, select } = batchedDb({ workProductRows: [] });
+
+    await expect(workProductService(db).listForIssues("company-1", [])).resolves.toEqual([]);
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("applies runtime-service reconciliation like listForIssue", async () => {
+    const runtimeProduct = createWorkProductRow({
+      id: "wp-runtime",
+      issueId: "issue-a",
+      type: "runtime_service",
+      provider: "paperclip",
+      runtimeServiceId: "runtime-1",
+      url: "https://workspace.example.ts.net:42013/",
+      status: "open",
+      healthStatus: "healthy",
+    });
+    const liveRuntimeService = {
+      id: "runtime-1",
+      url: "https://workspace.example.ts.net:42055/",
+      status: "stopped",
+      healthStatus: "healthy",
+    };
+    const single = batchedDb({ workProductRows: [runtimeProduct], runtimeServiceRows: [liveRuntimeService] });
+    const batched = batchedDb({ workProductRows: [runtimeProduct], runtimeServiceRows: [liveRuntimeService] });
+
+    const [fromSingle] = await workProductService(single.db).listForIssue("issue-a");
+    const [fromBatch] = await workProductService(batched.db).listForIssues("company-1", ["issue-a"]);
+
+    expect(fromBatch).toMatchObject({
+      url: "https://workspace.example.ts.net:42055/",
+      status: "closed",
+      healthStatus: "unhealthy",
+    });
+    expect(fromBatch).toEqual(fromSingle);
   });
 });

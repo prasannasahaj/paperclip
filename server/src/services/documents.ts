@@ -165,6 +165,17 @@ export function documentService(db: Db) {
       return filterSystemDocuments(rows, options.includeSystem ?? false).map((row) => mapIssueDocumentRow(row, true));
     },
 
+    listIssueDocumentSummariesForIssues: async (companyId: string, issueIds: string[], options: { includeSystem?: boolean } = {}) => {
+      if (issueIds.length === 0) return [];
+      const rows = await db
+        .select({ ...issueDocumentSelect, latestBody: sql<string>`''` })
+        .from(issueDocuments)
+        .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
+        .where(and(eq(issueDocuments.companyId, companyId), inArray(issueDocuments.issueId, issueIds)))
+        .orderBy(asc(issueDocuments.key), desc(documents.updatedAt));
+      return filterSystemDocuments(rows, options.includeSystem ?? false).map((row) => mapIssueDocumentRow(row, false));
+    },
+
     getIssueDocumentByKey: async (issueId: string, rawKey: string) => {
       const key = normalizeDocumentKey(rawKey);
       const row = await db

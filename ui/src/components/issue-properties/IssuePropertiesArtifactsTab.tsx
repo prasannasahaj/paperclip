@@ -49,6 +49,7 @@ import { useLocation } from "@/lib/router";
 import { useArtifactsV1Enabled } from "@/hooks/useArtifactsV1Enabled";
 import { ArtifactFileRow, ArtifactRow, ROW_ACTION_CLASS, fileRowSourceFromAttachment, fileRowSourceFromWorkProduct, subjectFromAttachment, subjectFromIssueDocument, subjectFromWorkProduct, workProductStateBadge, type ArtifactSubject } from "@/components/artifacts/v1";
 import { artifactUrl } from "@/lib/artifact-card-data";
+import { IssueTreeDeliverablesSection } from "@/components/IssueTreeDeliverablesSection";
 
 export type TaskDocumentEditorOptions = Pick<ComponentProps<typeof IssueDocumentsSection>,
   "mentions" | "imageUploadHandler" | "externalReferences" | "feedbackVotes" | "feedbackDataSharingPreference"
@@ -428,7 +429,7 @@ function DocumentRow({
  * redundancy is intentional), and attachments from agents and people.
  * Attachments already promoted to work products are deduped out.
  */
-export function IssuePropertiesArtifactsTab({
+function IssuePropertiesArtifactsContent({
   issue,
   documentEditor,
   documentDeepLink,
@@ -609,7 +610,7 @@ export function IssuePropertiesArtifactsTab({
     }
     return withUploads(
       <div className="px-1 py-6 text-sm text-muted-foreground">
-        No artifacts yet. Work products, documents, and agent-produced files
+        No artifacts yet on this task. Work products, documents, and agent-produced files
         will appear here.
       </div>,
       true,
@@ -799,5 +800,14 @@ export function IssuePropertiesArtifactsTab({
         );
       })}
     </div>
+  );
+}
+
+export function IssuePropertiesArtifactsTab(props: IssuePropertiesArtifactsTabProps) {
+  return (
+    <>
+      <IssueTreeDeliverablesSection issueId={props.issue.id} />
+      <IssuePropertiesArtifactsContent {...props} />
+    </>
   );
 }

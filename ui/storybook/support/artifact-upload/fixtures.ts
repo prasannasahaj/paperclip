@@ -70,11 +70,14 @@ export function showFileDrag(canvas: HTMLElement, scroll = false) {
   target.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: transfer }));
 }
 
+const noSubTaskOutputs = { rootIssueId: issue.id, tasks: [], omitted: { tasks: false, workProducts: false, documents: false } };
+
 export function createPreviewClient(state: PreviewState) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
   client.setQueryData([...queryKeys.issues.documents(issue.id), "list"], state === "empty" ? [] : state === "long" ? [...documents, makeDocument("long-reference", "Database transaction recovery and instance sleep: detailed engineering reference with verification evidence", Array.from({ length: 20 }, (_, index) => `## Investigation ${index + 1}\n\nCheck the transaction outcome before retrying uncertain writes. Preserve the durable receipt and current task state.`).join("\n\n"))] : documents);
   client.setQueryData(queryKeys.issues.attachments(issue.id), []);
   client.setQueryData(queryKeys.issues.workProducts(issue.id), []);
+  client.setQueryData(queryKeys.issues.treeDeliverables(issue.id), noSubTaskOutputs);
   client.setQueryData(queryKeys.issues.runs(issue.id), []);
   client.setQueryData(queryKeys.agents.list(issue.companyId), storybookAgents);
   return client;
@@ -114,6 +117,7 @@ export function installPreviewApi(client: QueryClient) {
       if (file) return new Response(file, { headers: { "Content-Type": file.type || "application/octet-stream" } });
     }
     if (url.pathname === `${base}/work-products`) return Response.json(client.getQueryData(queryKeys.issues.workProducts(issue.id)) ?? []);
+    if (url.pathname === `${base}/tree-deliverables`) return Response.json(noSubTaskOutputs);
     if (url.pathname === `${base}/attachments`) return Response.json([]);
     if (url.pathname === `${base}/documents`) return Response.json(client.getQueryData([...queryKeys.issues.documents(issue.id), "list"]) ?? []);
     if (url.pathname.startsWith(`${base}/documents/`)) {
