@@ -85,6 +85,65 @@ async function evictRequest(request) {
   }));
 }
 
+function notificationTargetUrl(data) {
+  const homeUrl = new URL("/", self.location.origin).href;
+  const href = data && typeof data.href === "string" ? data.href : "/";
+  try {
+    const target = new URL(href, self.location.origin);
+    return target.origin === self.location.origin ? target.href : homeUrl;
+  } catch {
+    return homeUrl;
+  }
+}
+
+const DESKTOP_NOTIFICATION_MESSAGE_TYPE = "paperclip:desktop-notification";
+
+function isSameOriginClient(client) {
+  return new URL(client.url).origin === self.location.origin;
+}
+
+function preferredSameOriginWindow(windowClients) {
+  const sameOriginWindows = windowClients.filter(isSameOriginClient);
+  return sameOriginWindows.find((client) => client.focused === true) ??
+    sameOriginWindows.find((client) => client.visibilityState === "visible") ??
+    sameOriginWindows[0];
+}
+
+function readDesktopNotificationMessage(data) {
+  if (!data || typeof data !== "object" || data.type !== DESKTOP_NOTIFICATION_MESSAGE_TYPE) return null;
+  const { title, body, href, tag } = data;
+  if (typeof title !== "string" || title.length === 0) return null;
+  if (typeof href !== "string" || typeof tag !== "string") return null;
+  if (body !== undefined && typeof body !== "string") return null;
+  return { title, body, href, tag };
+}
+
+async function showDesktopNotificationUnlessFocused(notification) {
+  const windowClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (windowClients.some((client) => isSameOriginClient(client) && client.focused === true)) return;
+  await self.registration.showNotification(notification.title, {
+    body: notification.body,
+    tag: notification.tag,
+    data: { href: notification.href },
+  });
+}
+
+async function focusOrOpenWindow(targetUrl) {
+  const windowClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const sameOriginWindow = preferredSameOriginWindow(windowClients);
+  if (sameOriginWindow) {
+    try {
+      await sameOriginWindow.focus();
+      await sameOriginWindow.navigate(targetUrl);
+      return;
+    } catch {
+      await self.clients.openWindow(targetUrl);
+      return;
+    }
+  }
+  await self.clients.openWindow(targetUrl);
+}
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
@@ -96,6 +155,17 @@ self.addEventListener("activate", (event) => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(focusOrOpenWindow(notificationTargetUrl(event.notification.data)));
+});
+
+self.addEventListener("message", (event) => {
+  const notification = readDesktopNotificationMessage(event.data);
+  if (!notification) return;
+  event.waitUntil(showDesktopNotificationUnlessFocused(notification));
 });
 
 self.addEventListener("fetch", (event) => {

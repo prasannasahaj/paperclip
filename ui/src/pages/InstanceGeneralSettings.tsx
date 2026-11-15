@@ -13,6 +13,7 @@ import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { QueryErrorState, useQueryView } from "@/components/QueryView";
 import { ModeBadge } from "@/components/access/ModeBadge";
+import { DesktopNotificationsSetting } from "@/components/DesktopNotificationsSetting";
 import { Button } from "../components/ui/button";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -176,6 +177,10 @@ export function InstanceGeneralSettings({ embedded = false }: { embedded?: boole
         </div>
       </section>
       )}
+
+      <section>
+        <DesktopNotificationsSetting />
+      </section>
 
       {showBackupRetention && (
       <section>

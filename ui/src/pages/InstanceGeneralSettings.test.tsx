@@ -265,6 +265,8 @@ describe("InstanceGeneralSettings operator-hidden sections", () => {
 
     expect(container.textContent).toContain("Deployment and auth");
     expect(container.textContent).toContain("Censor username in logs");
+    expect(container.textContent).toContain("Desktop notifications");
+    expect(container.querySelector('[aria-label="Toggle desktop notifications"]')).not.toBeNull();
     expect(container.textContent).toContain("Backup retention");
   });
 });

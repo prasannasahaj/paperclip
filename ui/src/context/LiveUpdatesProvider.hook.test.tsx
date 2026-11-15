@@ -9,10 +9,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "../lib/queryKeys";
 import { isLiveReconciledQuery } from "../lib/live-reconcile";
 
-const { pushToast, companySelection } = vi.hoisted(() => ({
+const { pushToast, companySelection, desktopNotificationState, showDesktopNotification, attentionList } = vi.hoisted(() => ({
   pushToast: vi.fn(() => "toast-id"),
   companySelection: { id: "company-1" },
+  desktopNotificationState: { enabled: false, listeners: new Set<() => void>() },
+  showDesktopNotification: vi.fn(async () => true),
+  attentionList: vi.fn(),
 }));
+vi.mock("../lib/desktop-notifications", () => ({
+  isDesktopNotificationsEnabled: () => desktopNotificationState.enabled,
+  subscribeDesktopNotificationsEnabled: (listener: () => void) => {
+    desktopNotificationState.listeners.add(listener);
+    return () => { desktopNotificationState.listeners.delete(listener); };
+  },
+  showDesktopNotification,
+}));
+vi.mock("../api/attention", () => ({ attentionApi: { list: attentionList } }));
 vi.mock("./CompanyContext", () => ({
   useCompany: () => ({ selectedCompanyId: companySelection.id, selectedCompany: { id: companySelection.id } }),
 }));
@@ -133,10 +145,14 @@ describe("LiveUpdatesProvider socket run notification scope", () => {
   let queryClient: QueryClient;
   let container: HTMLDivElement;
   let root: Root | null;
-  let sockets: Array<{ onmessage: ((event: MessageEvent) => void) | null }>;
+  let sockets: Array<{ onmessage: ((event: MessageEvent) => void) | null; readyState: number }>;
 
   beforeEach(() => {
     pushToast.mockClear();
+    showDesktopNotification.mockClear();
+    attentionList.mockReset();
+    desktopNotificationState.enabled = false;
+    desktopNotificationState.listeners.clear();
     companySelection.id = "company-1";
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
     queryClient.setQueryData(queryKeys.auth.session, { user: { id: "viewer" }, session: { id: "session", userId: "viewer" } });
@@ -171,6 +187,7 @@ describe("LiveUpdatesProvider socket run notification scope", () => {
     root = null;
     queryClient.clear();
     container.remove();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -220,6 +237,156 @@ describe("LiveUpdatesProvider socket run notification scope", () => {
     await vi.waitFor(() => expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({
       queryKey: queryKeys.agents.detail("other-agent"),
     })));
+  });
+
+  function setDesktopNotificationsEnabled(enabled: boolean) {
+    desktopNotificationState.enabled = enabled;
+    desktopNotificationState.listeners.forEach((listener) => listener());
+  }
+
+  async function advance(ms: number) {
+    await reactAct(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  }
+
+  async function renderProvider() {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await reactAct(async () => {
+      root!.render(<QueryClientProvider client={queryClient}><LiveUpdatesProvider><span>Task</span></LiveUpdatesProvider></QueryClientProvider>);
+    });
+    await advance(0);
+    expect(sockets).toHaveLength(1);
+  }
+
+  async function advancePastBlurDelay() {
+    await advance(__liveUpdatesTestUtils.DESKTOP_BACKGROUND_FOCUS_DELAY_MS);
+    await advance(0);
+  }
+
+  async function blurWindow() {
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    await reactAct(async () => { window.dispatchEvent(new Event("blur")); });
+  }
+
+  async function focusWindow() {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    await reactAct(async () => { window.dispatchEvent(new Event("focus")); });
+  }
+
+  async function hideDocument() {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await reactAct(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+  }
+
+  function approvalCreatedMessage() {
+    return new MessageEvent("message", {
+      data: JSON.stringify({ id: 50, companyId: "company-1", type: "activity.logged", createdAt: "2026-09-09T18:00:00.000Z",
+        payload: { action: "approval.created", entityType: "approval", entityId: "approval-b" } }),
+    });
+  }
+
+  function attentionFeedWith(...ids: string[]) {
+    return {
+      items: ids.map((id) => ({
+        id, sourceKind: "approval", severity: "high", whyNow: `Needs you ${id}`, dedupKey: `dedup-${id}`,
+        dismissal: null, subject: { identifier: `PAP-${id}`, title: `Title ${id}`, href: `/approvals/${id}` },
+      })),
+    };
+  }
+
+  it("a backgrounded page with desktop notifications enabled opens a dedicated socket and delivers approval.created to the watcher", async () => {
+    desktopNotificationState.enabled = true;
+    attentionList.mockResolvedValueOnce(attentionFeedWith("a")).mockResolvedValue(attentionFeedWith("a", "b"));
+    await renderProvider();
+    await blurWindow();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(2);
+    await vi.waitFor(() => expect(attentionList).toHaveBeenCalledTimes(1));
+    expect(attentionList).toHaveBeenCalledWith("company-1", { all: true, view: "mine" });
+
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await reactAct(async () => sockets[1]!.onmessage!(approvalCreatedMessage()));
+    await advance(1000);
+    await vi.waitFor(() => expect(showDesktopNotification).toHaveBeenCalledTimes(1));
+    expect(showDesktopNotification).toHaveBeenCalledWith(expect.objectContaining({ tag: "attention:dedup-b", href: "/approvals/b" }));
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(pushToast).not.toHaveBeenCalled();
+  });
+
+  it("a hidden page opens the dedicated socket immediately while the main socket closes", async () => {
+    desktopNotificationState.enabled = true;
+    attentionList.mockResolvedValue(attentionFeedWith("a"));
+    await renderProvider();
+    await hideDocument();
+    await advance(0);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].onmessage).toBeNull();
+    expect(sockets[1].readyState).toBe(1);
+    expect(sockets[1].onmessage).toBeTypeOf("function");
+  });
+
+  it("an unfocused but visible page waits for the blur delay before opening the dedicated socket", async () => {
+    desktopNotificationState.enabled = true;
+    attentionList.mockResolvedValue(attentionFeedWith("a"));
+    await renderProvider();
+    await blurWindow();
+    await advance(__liveUpdatesTestUtils.DESKTOP_BACKGROUND_FOCUS_DELAY_MS - 1);
+    await advance(0);
+    expect(sockets).toHaveLength(1);
+    await advance(1);
+    await advance(0);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("focus returning within the blur delay cancels the dedicated socket", async () => {
+    desktopNotificationState.enabled = true;
+    attentionList.mockResolvedValue(attentionFeedWith("a"));
+    await renderProvider();
+    await blurWindow();
+    await advance(__liveUpdatesTestUtils.DESKTOP_BACKGROUND_FOCUS_DELAY_MS - 100);
+    await focusWindow();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(1);
+    expect(attentionList).not.toHaveBeenCalled();
+  });
+
+  it("no dedicated socket while the page is focused", async () => {
+    desktopNotificationState.enabled = true;
+    await renderProvider();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(1);
+    expect(attentionList).not.toHaveBeenCalled();
+  });
+
+  it("no dedicated socket when desktop notifications are disabled", async () => {
+    await renderProvider();
+    await blurWindow();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(1);
+    expect(attentionList).not.toHaveBeenCalled();
+  });
+
+  it("turning desktop notifications on while backgrounded opens the dedicated socket", async () => {
+    attentionList.mockResolvedValue(attentionFeedWith("a"));
+    await renderProvider();
+    await blurWindow();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(1);
+    await reactAct(async () => setDesktopNotificationsEnabled(true));
+    await advance(0);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("returning to the foreground closes the dedicated socket", async () => {
+    desktopNotificationState.enabled = true;
+    attentionList.mockResolvedValue(attentionFeedWith("a"));
+    await renderProvider();
+    await blurWindow();
+    await advancePastBlurDelay();
+    expect(sockets).toHaveLength(2);
+    await focusWindow();
+    expect(sockets[1].readyState).toBe(3);
+    expect(sockets[1].onmessage).toBeNull();
+    expect(sockets[0].readyState).toBe(1);
   });
 
   it("ignores a callback retained from a closed socket", async () => {
