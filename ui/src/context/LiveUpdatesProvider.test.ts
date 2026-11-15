@@ -1,7 +1,13 @@
 // @vitest-environment node
 
-const { getCommentMock } = vi.hoisted(() => ({
+const { getCommentMock, desktopNotificationState } = vi.hoisted(() => ({
   getCommentMock: vi.fn(),
+  desktopNotificationState: { enabled: false },
+}));
+
+vi.mock("../lib/desktop-notifications", () => ({
+  isDesktopNotificationsEnabled: () => desktopNotificationState.enabled,
+  showDesktopNotification: vi.fn(),
 }));
 
 vi.mock("../api/issues", () => ({
@@ -10,8 +16,9 @@ vi.mock("../api/issues", () => ({
   },
 }));
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import type { AttentionFeed, AttentionItem, LiveEvent } from "@paperclipai/shared";
 import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -2319,5 +2326,370 @@ describe("activity toast attribution", () => {
     expect(toast?.title).toBe("Fix task notifications");
     expect(toast?.body).toBe("System changed status to blocked");
     expect(toast?.actor).toBeUndefined();
+  });
+});
+
+type PageState = "hidden" | "visible-unfocused" | "foregrounded";
+
+function stubPageState(state: PageState) {
+  vi.stubGlobal("document", {
+    visibilityState: state === "hidden" ? "hidden" : "visible",
+    hasFocus: () => state === "foregrounded",
+  });
+}
+
+function newGate() {
+  return { cooldownHits: new Map<string, number[]>(), suppressUntil: 0, observedRunOutcomes: new Set<string>() };
+}
+
+function feedWith(...ids: string[]): AttentionFeed {
+  return {
+    items: ids.map((id) => ({
+      id,
+      sourceKind: "approval",
+      severity: "high",
+      whyNow: `Needs you ${id}`,
+      dedupKey: `dedup-${id}`,
+      dismissal: null,
+      subject: { identifier: `PAP-${id}`, title: `Title ${id}`, href: `/approvals/${id}` },
+    }) as unknown as AttentionItem),
+  } as AttentionFeed;
+}
+
+function activityEvent(action: string, overrides: Partial<LiveEvent> = {}): LiveEvent {
+  return {
+    id: 1,
+    companyId: "company-1",
+    type: "activity.logged",
+    createdAt: "2026-11-15T10:00:00.000Z",
+    payload: { action, entityType: "approval", entityId: "approval-1" },
+    ...overrides,
+  };
+}
+
+describe("desktop attention watcher", () => {
+  const DEBOUNCE_MS = 1000;
+  let show: ReturnType<typeof vi.fn>;
+  let fetchFeed: ReturnType<typeof vi.fn>;
+  let gate: ReturnType<typeof newGate>;
+  let queryClient: QueryClient;
+  let watchers: Array<{ dispose(): void }>;
+
+  function createWatcher(userId: string | null = "viewer") {
+    const watcher = __liveUpdatesTestUtils.createDesktopAttentionWatcher({
+      queryClient,
+      companyId: "company-1",
+      getUserId: () => userId,
+      gate,
+      show: show as never,
+      fetchFeed: fetchFeed as never,
+      debounceMs: DEBOUNCE_MS,
+    });
+    watchers.push(watcher);
+    return watcher;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-15T10:00:00.000Z"));
+    desktopNotificationState.enabled = true;
+    stubPageState("hidden");
+    show = vi.fn(async () => true);
+    fetchFeed = vi.fn(async () => feedWith("a"));
+    gate = newGate();
+    queryClient = new QueryClient();
+    watchers = [];
+  });
+
+  afterEach(() => {
+    watchers.forEach((watcher) => watcher.dispose());
+    queryClient.clear();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    desktopNotificationState.enabled = false;
+  });
+
+  it("seed sets the baseline and notifies nothing", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    expect(fetchFeed).toHaveBeenCalledTimes(1);
+    expect(show).not.toHaveBeenCalled();
+    fetchFeed.mockResolvedValue(feedWith("a"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("skips seeding without a signed-in user", async () => {
+    const watcher = createWatcher(null);
+    await watcher.seed();
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+
+  it("an approval.created trigger while hidden fetches the mine feed and notifies the new item", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockResolvedValue(feedWith("a", "b"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(fetchFeed).toHaveBeenCalledTimes(2);
+    expect(show).toHaveBeenCalledExactlyOnceWith({
+      title: "Needs you b",
+      body: "PAP-b Title b",
+      href: "/approvals/b",
+      tag: "attention:dedup-b",
+    });
+  });
+
+  it("a trigger that arrives before seeding finishes waits for it", async () => {
+    let finishSeed: (feed: AttentionFeed) => void = () => undefined;
+    fetchFeed.mockImplementationOnce(() => new Promise<AttentionFeed>((resolve) => { finishSeed = resolve; }));
+    const watcher = createWatcher();
+    const seeding = watcher.seed();
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(fetchFeed).toHaveBeenCalledTimes(1);
+    fetchFeed.mockResolvedValue(feedWith("a", "b"));
+    finishSeed(feedWith("a"));
+    await seeding;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchFeed).toHaveBeenCalledTimes(2);
+    expect(show).toHaveBeenCalledTimes(1);
+  });
+
+  it("a burst of 50 triggers produces one fetch", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockClear();
+    for (let id = 1; id <= 50; id++) watcher.onEvent(activityEvent("approval.created", { id }));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(fetchFeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch while the page is foregrounded, when disabled, for a non-trigger action, or for another company", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockClear();
+
+    stubPageState("foregrounded");
+    watcher.onEvent(activityEvent("approval.created"));
+    stubPageState("hidden");
+
+    desktopNotificationState.enabled = false;
+    watcher.onEvent(activityEvent("approval.created"));
+    desktopNotificationState.enabled = true;
+
+    watcher.onEvent(activityEvent("issue.comment_added"));
+    watcher.onEvent(activityEvent("approval.created", { companyId: "company-2" }));
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 2);
+    expect(fetchFeed).not.toHaveBeenCalled();
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("does not notify inside gate.suppressUntil", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    gate.suppressUntil = Date.now() + 60_000;
+    fetchFeed.mockResolvedValue(feedWith("a", "b"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("a failed fetch notifies nothing and a later trigger still notifies", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockRejectedValueOnce(new Error("network down"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(show).not.toHaveBeenCalled();
+
+    fetchFeed.mockResolvedValue(feedWith("a", "b"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ tag: "attention:dedup-b" }));
+  });
+
+  it("runs no cache invalidation while fetching the feed", async () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockResolvedValue(feedWith("a", "b"));
+    watcher.onEvent(activityEvent("approval.created"));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("dispose cancels a pending fetch", async () => {
+    const watcher = createWatcher();
+    await watcher.seed();
+    fetchFeed.mockClear();
+    watcher.onEvent(activityEvent("approval.created"));
+    watcher.dispose();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 2);
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop task and run notifications", () => {
+  let show: ReturnType<typeof vi.fn>;
+  let gate: ReturnType<typeof newGate>;
+  let queryClient: QueryClient;
+  const viewer = { userId: "viewer", agentId: null };
+
+  function taskActivityEvent(
+    action: string,
+    overrides: Partial<LiveEvent> = {},
+    entityId = "task-1",
+  ): LiveEvent {
+    return {
+      id: 1,
+      companyId: "company-1",
+      type: "activity.logged",
+      createdAt: "2026-11-15T10:00:00.000Z",
+      toastEligible: true,
+      payload: {
+        action,
+        entityType: "issue",
+        entityId,
+        issueIdentifier: "PAP-1",
+        actorType: "user",
+        actorId: "someone-else",
+        actorName: "Alex Example",
+        details: { commentId: "comment-1" },
+      },
+      ...overrides,
+    };
+  }
+
+  function issueCreatedEvent(overrides: Partial<LiveEvent> = {}, entityId = "task-1"): LiveEvent {
+    return taskActivityEvent("issue.created", overrides, entityId);
+  }
+
+  function failedRunEvent(overrides: Partial<LiveEvent> = {}, payload: Record<string, unknown> = {}): LiveEvent {
+    return {
+      id: 2,
+      companyId: "company-1",
+      type: "heartbeat.run.status",
+      createdAt: "2026-11-15T10:00:30.000Z",
+      toastEligible: true,
+      payload: {
+        runId: "run-1",
+        agentId: "agent-1",
+        status: "failed",
+        finishedAt: "2026-11-15T10:00:00.000Z",
+        ...payload,
+      },
+      ...overrides,
+    };
+  }
+
+  function notify(event: LiveEvent) {
+    __liveUpdatesTestUtils.notifyDesktopForEvent(queryClient, "company-1", event, gate, viewer, show as never);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-15T10:01:00.000Z"));
+    desktopNotificationState.enabled = true;
+    stubPageState("hidden");
+    show = vi.fn(async () => true);
+    gate = newGate();
+    queryClient = new QueryClient();
+  });
+
+  afterEach(() => {
+    queryClient.clear();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    desktopNotificationState.enabled = false;
+  });
+
+  it("notifies for a toast-eligible issue.created while hidden", () => {
+    notify(issueCreatedEvent());
+    expect(show).toHaveBeenCalledExactlyOnceWith({
+      title: "Alex Example created PAP-1",
+      body: undefined,
+      href: "/issues/PAP-1",
+      tag: "activity:issue.created:task-1",
+    });
+  });
+
+  it("notifies for a toast-eligible issue.updated while hidden", () => {
+    notify(taskActivityEvent("issue.updated"));
+    expect(show).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      title: "Alex Example updated PAP-1",
+      href: "/issues/PAP-1",
+    }));
+  });
+
+  it("does not notify for a toast-eligible issue.comment_added", () => {
+    notify(taskActivityEvent("issue.comment_added"));
+    expect(show).not.toHaveBeenCalled();
+    expect(__liveUpdatesTestUtils.desktopNotificationForEvent(
+      queryClient, "company-1", taskActivityEvent("issue.comment_added"), viewer,
+    )).toBeNull();
+  });
+
+  it("notifies for a failed run outcome while hidden", () => {
+    notify(failedRunEvent());
+    expect(show).toHaveBeenCalledExactlyOnceWith({
+      title: "Agent run failed",
+      body: undefined,
+      href: "/agents/agent-1/runs/run-1",
+      tag: "run:run-1:failed",
+    });
+  });
+
+  it("does not notify while foregrounded or when disabled", () => {
+    stubPageState("foregrounded");
+    notify(issueCreatedEvent());
+    stubPageState("hidden");
+    desktopNotificationState.enabled = false;
+    notify(issueCreatedEvent());
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for an ineligible event", () => {
+    notify(issueCreatedEvent({ toastEligible: false }));
+    notify(issueCreatedEvent({ toastEligible: undefined }));
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for a stale run outcome or for another company", () => {
+    notify(failedRunEvent({}, { finishedAt: "2026-11-15T09:00:00.000Z" }));
+    notify(issueCreatedEvent({ companyId: "company-2" }));
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("does not notify inside gate.suppressUntil", () => {
+    gate.suppressUntil = Date.now() + 60_000;
+    notify(issueCreatedEvent());
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("caps a burst at TOAST_COOLDOWN_MAX", () => {
+    for (let index = 1; index <= 6; index++) notify(issueCreatedEvent({}, `task-${index}`));
+    expect(show).toHaveBeenCalledTimes(3);
+  });
+
+  it("visible-but-unfocused: calling notifyDesktopForEvent then handleLiveEvent for the same failed-run event still pushes the run toast once", () => {
+    stubPageState("visible-unfocused");
+    const pushToast = vi.fn(() => "toast-id");
+    const event = failedRunEvent();
+    notify(event);
+    __liveUpdatesTestUtils.handleLiveEvent(queryClient, "company-1", "/PAP/dashboard", event, pushToast, gate, viewer);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(pushToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("isRunOutcomeStale only compares delivery against finish time and records nothing", () => {
+    const fresh = failedRunEvent();
+    expect(__liveUpdatesTestUtils.isRunOutcomeStale(fresh)).toBe(false);
+    expect(__liveUpdatesTestUtils.isRunOutcomeStale(fresh)).toBe(false);
+    expect(__liveUpdatesTestUtils.isRunOutcomeStale(failedRunEvent({}, { finishedAt: "2026-11-15T09:00:00.000Z" }))).toBe(true);
+    expect(gate.observedRunOutcomes.size).toBe(0);
   });
 });

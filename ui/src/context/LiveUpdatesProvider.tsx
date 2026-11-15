@@ -36,6 +36,7 @@ import {
   removeRunFromList,
 } from "../lib/live-runs-cache";
 import type {
+  AttentionFeed,
   Agent,
   HeartbeatRun,
   Issue,
@@ -47,6 +48,7 @@ import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import type { CompanyUserDirectoryResponse } from "../api/access";
 import type { CaseDetail, IssueCaseLink } from "../api/cases";
 import { issuesApi } from "../api/issues";
+import { attentionApi } from "../api/attention";
 import { authApi } from "../api/auth";
 import type { CompanyListResult } from "../api/companies-query";
 import { healthApi } from "../api/health";
@@ -60,6 +62,17 @@ import {
 } from "../lib/optimistic-issue-runs";
 import { useConnectivityStore } from "../lib/connectivity";
 import { queryKeys } from "../lib/queryKeys";
+import { coordinatorAttentionQueryKey } from "../lib/coordinator-attention";
+import {
+  createAttentionNotificationTracker,
+  isAttentionTrigger,
+} from "../lib/desktop-notification-attention";
+import {
+  isDesktopNotificationsEnabled,
+  showDesktopNotification,
+  subscribeDesktopNotificationsEnabled,
+  type DesktopNotificationInput,
+} from "../lib/desktop-notifications";
 import { extractCompanyPrefixFromPath, toCompanyRelativePath } from "../lib/company-routes";
 import { useLocation } from "../lib/router";
 import { agentRouteRef } from "../lib/utils";
@@ -2072,6 +2085,12 @@ interface ToastGate {
   observedRunOutcomes: Set<string>;
 }
 
+function isRunOutcomeStale(event: LiveEvent): boolean {
+  const finishedAt = Date.parse(readString((event.payload ?? {}).finishedAt) ?? "");
+  const deliveredAt = Date.parse(event.createdAt);
+  return deliveredAt - finishedAt > RUN_TOAST_MAX_AGE_MS;
+}
+
 function observeRunOutcome(gate: ToastGate, event: LiveEvent): boolean {
   const payload = event.payload ?? {};
   const runId = readString(payload.runId);
@@ -2089,9 +2108,7 @@ function observeRunOutcome(gate: ToastGate, event: LiveEvent): boolean {
   // Use the two server timestamps: delivery time is not failure time. This
   // also keeps historical failures quiet after a reload, without client clock
   // skew hiding fresh failures. Missing timestamps retain legacy behavior.
-  const finishedAt = Date.parse(readString(payload.finishedAt) ?? "");
-  const deliveredAt = Date.parse(event.createdAt);
-  return observed || deliveredAt - finishedAt > RUN_TOAST_MAX_AGE_MS;
+  return observed || isRunOutcomeStale(event);
 }
 
 function shouldSuppressToast(gate: ToastGate, category: string): boolean {
@@ -2122,6 +2139,151 @@ function gatedPushToast(
   if (shouldSuppressToast(gate, category)) return;
   const id = pushToast(toast);
   if (id !== null) recordToastHit(gate, category);
+}
+
+const DESKTOP_ATTENTION_DEBOUNCE_MS = 1000;
+const DESKTOP_ATTENTION_CATEGORY = "desktop:attention";
+const DESKTOP_NOTIFIABLE_ACTIVITY_ACTIONS: ReadonlySet<string> = new Set(["issue.created", "issue.updated"]);
+const DESKTOP_BACKGROUND_FOCUS_DELAY_MS = 1500;
+
+function toDesktopNotification(toast: ToastInput, tag: string): DesktopNotificationInput {
+  return {
+    title: toast.title,
+    body: toast.body,
+    href: toast.action?.href ?? "/inbox/mine",
+    tag,
+  };
+}
+
+function desktopNotificationForEvent(
+  queryClient: QueryClient,
+  expectedCompanyId: string,
+  event: LiveEvent,
+  currentActor: { userId: string | null; agentId: string | null },
+): DesktopNotificationInput | null {
+  if (event.companyId !== expectedCompanyId || event.toastEligible !== true) return null;
+  const payload = event.payload ?? {};
+
+  if (event.type === "activity.logged") {
+    if (!DESKTOP_NOTIFIABLE_ACTIVITY_ACTIONS.has(readString(payload.action) ?? "")) return null;
+    const toast = buildActivityToast(queryClient, expectedCompanyId, payload, currentActor);
+    if (!toast) return null;
+    const tag = toast.dedupeKey ?? `activity:${readString(payload.entityId)}:${readString(payload.action)}`;
+    return toDesktopNotification(toast, tag);
+  }
+
+  if (event.type === "heartbeat.run.status") {
+    if (isRunOutcomeStale(event)) return null;
+    const toast = buildRunStatusToast(payload, (id) => resolveAgentName(queryClient, expectedCompanyId, id));
+    if (!toast) return null;
+    return toDesktopNotification(toast, `run:${readString(payload.runId)}:${readString(payload.status)}`);
+  }
+
+  return null;
+}
+
+function canNotifyDesktopNow(gate: ToastGate): boolean {
+  return isDesktopNotificationsEnabled() && !isPageForegrounded() && Date.now() >= gate.suppressUntil;
+}
+
+function showGatedDesktopNotification(
+  gate: ToastGate,
+  category: string,
+  notification: DesktopNotificationInput,
+  show: typeof showDesktopNotification,
+) {
+  if (shouldSuppressToast(gate, category)) return;
+  void show(notification);
+  recordToastHit(gate, category);
+}
+
+function notifyDesktopForEvent(
+  queryClient: QueryClient,
+  expectedCompanyId: string,
+  event: LiveEvent,
+  gate: ToastGate,
+  currentActor: { userId: string | null; agentId: string | null },
+  show: typeof showDesktopNotification = showDesktopNotification,
+): void {
+  if (!canNotifyDesktopNow(gate)) return;
+  const notification = desktopNotificationForEvent(queryClient, expectedCompanyId, event, currentActor);
+  if (!notification) return;
+  const tagPrefix = notification.tag.split(":")[0];
+  showGatedDesktopNotification(gate, `desktop:${tagPrefix}`, notification, show);
+}
+
+interface DesktopAttentionWatcherOptions {
+  queryClient: QueryClient;
+  companyId: string;
+  getUserId: () => string | null;
+  gate: ToastGate;
+  show?: typeof showDesktopNotification;
+  fetchFeed?: () => Promise<AttentionFeed>;
+  debounceMs?: number;
+}
+
+interface DesktopAttentionWatcher {
+  onEvent(event: LiveEvent): void;
+  seed(): Promise<void>;
+  dispose(): void;
+}
+
+function createDesktopAttentionWatcher(options: DesktopAttentionWatcherOptions): DesktopAttentionWatcher {
+  const { queryClient, companyId, getUserId, gate } = options;
+  const show = options.show ?? showDesktopNotification;
+  const debounceMs = options.debounceMs ?? DESKTOP_ATTENTION_DEBOUNCE_MS;
+  const tracker = createAttentionNotificationTracker();
+  const fetchFeed = options.fetchFeed ?? (() =>
+    queryClient.fetchQuery({
+      queryKey: coordinatorAttentionQueryKey(companyId, getUserId(), "mine"),
+      queryFn: () => attentionApi.list(companyId, { all: true, view: "mine" }),
+      staleTime: 0,
+    }));
+  let seeding: Promise<void> = Promise.resolve();
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+
+  const readFeed = async (): Promise<AttentionFeed | null> => {
+    try {
+      return await fetchFeed();
+    } catch {
+      return null;
+    }
+  };
+
+  const flush = async () => {
+    pendingTimer = null;
+    await seeding;
+    if (disposed || getUserId() === null) return;
+    const feed = await readFeed();
+    if (!feed || disposed) return;
+    const notifications = tracker.observe(feed);
+    if (!canNotifyDesktopNow(gate)) return;
+    for (const notification of notifications) {
+      showGatedDesktopNotification(gate, DESKTOP_ATTENTION_CATEGORY, notification, show);
+    }
+  };
+
+  return {
+    seed() {
+      if (getUserId() === null) return Promise.resolve();
+      seeding = readFeed().then((feed) => {
+        if (feed) tracker.observe(feed);
+      });
+      return seeding;
+    },
+    onEvent(event) {
+      if (event.companyId !== companyId || !isAttentionTrigger(event)) return;
+      if (!isDesktopNotificationsEnabled() || isPageForegrounded()) return;
+      if (pendingTimer !== null) return;
+      pendingTimer = setTimeout(() => void flush(), debounceMs);
+    },
+    dispose() {
+      disposed = true;
+      if (pendingTimer !== null) clearTimeout(pendingTimer);
+      pendingTimer = null;
+    },
+  };
 }
 
 function handleLiveEvent(
@@ -2337,7 +2499,108 @@ function closeSocketQuietly(
   }
 }
 
+interface DesktopNotificationSocketOptions {
+  queryClient: QueryClient;
+  companyId: string;
+  getActor: () => { userId: string | null; agentId: string | null };
+  gate: ToastGate;
+}
+
+function connectDesktopNotificationSocket(options: DesktopNotificationSocketOptions): () => void {
+  const { queryClient, companyId, getActor, gate } = options;
+  const watcher = createDesktopAttentionWatcher({
+    queryClient,
+    companyId,
+    getUserId: () => getActor().userId,
+    gate,
+  });
+  let closed = false;
+  let reconnectAttempt = 0;
+  let reconnectTimer: number | null = null;
+  let socket: WebSocket | null = null;
+
+  const scheduleReconnect = () => {
+    if (closed || reconnectTimer !== null) return;
+    reconnectAttempt += 1;
+    const delayMs = Math.min(15000, 1000 * 2 ** Math.min(reconnectAttempt - 1, 4));
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delayMs);
+  };
+
+  const connect = () => {
+    if (closed) return;
+    const nextSocket = tryCreateWebSocket(
+      buildSameOriginWebSocketUrl(`/api/companies/${encodeURIComponent(companyId)}/events/ws`),
+    );
+    if (!nextSocket) {
+      scheduleReconnect();
+      return;
+    }
+    socket = nextSocket;
+    nextSocket.onopen = () => {
+      if (closed || socket !== nextSocket) {
+        closeSocketQuietly(nextSocket, "stale_connection");
+        return;
+      }
+      reconnectAttempt = 0;
+    };
+    nextSocket.onmessage = (message) => {
+      if (closed || socket !== nextSocket) return;
+      const raw = typeof message.data === "string" ? message.data : "";
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as LiveEvent;
+        notifyDesktopForEvent(queryClient, companyId, parsed, gate, getActor());
+        watcher.onEvent(parsed);
+      } catch {
+        return;
+      }
+    };
+    nextSocket.onerror = () => undefined;
+    nextSocket.onclose = () => {
+      if (socket !== nextSocket) return;
+      socket = null;
+      scheduleReconnect();
+    };
+  };
+
+  void watcher.seed();
+  const connectTimer = window.setTimeout(connect, 0);
+
+  return () => {
+    closed = true;
+    watcher.dispose();
+    window.clearTimeout(connectTimer);
+    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    const activeSocket = socket;
+    socket = null;
+    closeSocketQuietly(activeSocket, "desktop_notifications_inactive");
+  };
+}
+
+function useDesktopBackgrounded(visible: boolean, focused: boolean): boolean {
+  const unfocusedWhileVisible = visible && !focused;
+  const [blurDelayElapsed, setBlurDelayElapsed] = useState(false);
+  useEffect(() => {
+    if (!unfocusedWhileVisible) {
+      setBlurDelayElapsed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setBlurDelayElapsed(true), DESKTOP_BACKGROUND_FOCUS_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [unfocusedWhileVisible]);
+  return !visible || (unfocusedWhileVisible && blurDelayElapsed);
+}
+
 export const __liveUpdatesTestUtils = {
+  DESKTOP_BACKGROUND_FOCUS_DELAY_MS,
+  isRunOutcomeStale,
+  desktopNotificationForEvent,
+  notifyDesktopForEvent,
+  createDesktopAttentionWatcher,
+  connectDesktopNotificationSocket,
   createLiveInvalidationBatcher,
   isAmbientCompanyQueryKey,
   MENTION_POOL_REFRESH_WINDOW_MS,
@@ -2390,7 +2653,12 @@ function canUseLiveSession(sessionStatus: string, hasSession: boolean, deploymen
 }
 
 export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
-  const { visible } = usePageVisibility();
+  const { visible, focused } = usePageVisibility();
+  const desktopNotificationsEnabled = useSyncExternalStore(
+    subscribeDesktopNotificationsEnabled,
+    isDesktopNotificationsEnabled,
+    () => false,
+  );
   const wasHidden = useRef(!visible);
   const hasOpenedSocket = useRef(false);
   const hasNeededSocketRecovery = useRef(!visible);
@@ -2660,6 +2928,19 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     socketScopeKey,
     transcripts,
   ]);
+
+  const desktopBackgrounded = useDesktopBackgrounded(visible, focused);
+  const desktopSocketActive =
+    desktopNotificationsEnabled && desktopBackgrounded && canConnectSocket && liveCompanyId !== null;
+  useEffect(() => {
+    if (!desktopSocketActive || !liveCompanyId) return;
+    return connectDesktopNotificationSocket({
+      queryClient,
+      companyId: liveCompanyId,
+      getActor: () => ({ userId: currentActorRef.current.userId, agentId: currentActorRef.current.agentId }),
+      gate: gateRef.current,
+    });
+  }, [desktopSocketActive, liveCompanyId, queryClient, socketAuthKey]);
 
   return (
     <CompanyLiveConnectionContext.Provider value={
