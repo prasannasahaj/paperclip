@@ -49,6 +49,22 @@ If the main checkout has no `.env.local`, stop and ask the human; do not recreat
 
 To run only the UI against QA backends, `.env.local` must set `VITE_USE_PROXY='true'` (see `docs/local-setup.md` in that repo). Sign-in then uses the QA Auth0 tenant, so a QA account is required.
 
+### Signing in to the Atlas explore UI without a login
+
+The app signs in through Auth0 (`loginWithRedirect` in `src/routes/_protected.tsx`). A trial run (TAC-160) got past it with no saved login by answering the Auth0 round trip itself. `browser_route` cannot do this, because the response must echo values from the request. Use `browser_run_code_unsafe` and register `context.route` handlers:
+
+1. Read the Auth0 `domain`, `clientId` and `audience` from `public/config/config.js`.
+2. Answer `GET https://<domain>/authorize` with a `302` to `http://localhost:3000/?code=fakecode&state=<state from the request>`. Keep the `nonce` from the request.
+3. Answer `POST https://<domain>/oauth/token` with JSON `access_token`, `id_token`, `token_type: "Bearer"` and `expires_in`. Build `id_token` as a JWT with header `alg: RS256` and a dummy signature, and claims `iss` (`https://<domain>/`), `aud` (the `clientId`), the captured `nonce`, `sub`, `name`, `email`, `iat`, `exp`, and the roles claim `<authClaimsNamespace>/roles` holding the role the screen needs (see `src/common/constants/roles.ts` and `src/common/hooks/usePermissions`).
+4. Register the catch-all and the API stubs from "Writing the stubs", then open `http://localhost:3000`.
+
+Things the trial found:
+
+- The Auth0 SDK did not verify the token signature, so no key endpoint needed stubbing. Assumed to hold only for the SDK version in the repo; if sign-in fails after an upgrade, check whether the SDK now verifies the signature.
+- The return path keeps only the pathname, so a `?tab=` query is dropped. Click the tab.
+- State set on `globalThis` does not survive between `browser_run_code_unsafe` calls. To change a stub, register a later override route for the same URL.
+- The token is fake and works only against `localhost`. Never use real credentials for this.
+
 ## Step 3 — Use the Playwright browser
 
 Your tools include the `browser_*` tools of the `Playwright browser` MCP server (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot` and others). Paperclip connects that browser to your run in one of two ways, set on the agent:
@@ -134,6 +150,10 @@ Keep to the change and its immediate neighbours. Save a screenshot with `browser
 ## Step 6 — Record the verdict
 
 Post one comment and the status change in the same `PATCH`:
+
+Mark a criterion pass only when the criterion as written holds. If you measure a deviation, such as a table that moves when the story says it must not, report it as a fail with the numbers, even if the rest of the item passes.
+
+Attach each screenshot to the issue as a work product, following the `paperclip` skill, so the evidence outlives the run's temporary directory. A local path alone is not enough.
 
 - Pass: `{ "status": "done", "comment": "Approved: <commit tested>, <URL>. Verified: <what you saw, tied to each criterion>. Not tested: <gaps>. Evidence: <screenshot paths>" }`
 - Fail: `{ "status": "in_progress", "comment": "Changes requested: <what you did>, expected <x>, got <y>. Console/network: <errors>. Likely cause: <code location if you found it>. Evidence: <screenshot path>" }`
