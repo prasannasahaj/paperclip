@@ -64,23 +64,28 @@ Work one action at a time and read each result before choosing the next:
 - `browser_take_screenshot` saves an image file as evidence. Images are not shown to you unless the agent has `browser.images` enabled, so judge from the snapshot and keep the file as proof.
 - Watch `browser_console_messages` and `browser_network_requests` after each action that touches the change.
 
+When the agent has `browser.mockNetwork`, you also have `browser_route`: it answers requests matching a URL pattern with a status and body you choose. The agent's `browser.initPages` and `browser.initScripts` may already have stubbed the API and faked the signed-in session before your first action; the first log line says so.
+
 If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port yourself (Paperclip does that when the agent has `browser.cdpEndpoint`), and do not write Playwright scripts.
 
 ## Step 4 — Starting state, and when you need the human
 
 The human may have set things up before handing over. The issue or the hand-off comment can say "start at URL X, this is already done". Take that as your starting point: open the URL, confirm the state is really there, and continue from it. Setup is saved state, not a live tab, so anything the human left unsaved is not visible to you; say so and ask for it to be saved.
 
-Get the data you need in this order:
+Get the state you need in this order:
 
-1. **Reuse an existing campaign** that fits. Ask for one, or find it from the read-only database tools if you have them.
-2. **Create it through the application's API** when the data is cheap to create and the API is available to you.
-3. **Ask the human** to create it or perform the action, as below.
+1. **Stub it** when the check is about how the page renders data, and the run log says network stubbing is on or you have `browser_route`. Deep-link to the page, serve it responses you control, and cover the empty, error and slow cases the stubs make cheap. No login and no seeded data are needed. See "Verifying against stubs" below.
+2. **Reuse an existing campaign** that fits. Ask for one, or find it from the read-only database tools if you have them.
+3. **Create it through the application's API** when the data is cheap to create and the API is available to you.
+4. **Ask the human** to create it or perform the action, as below.
+
+A stubbed check never replaces an unstubbed one for the same change: stubs prove the page renders what it is given, not that the backend returns it. Do the backend half separately: call the real API, read the result back through a second API call, and use the read-only database tools for what the API does not show.
 
 Never write to the database directly and never touch production: the QA database is read-only to you, and the backends are UK non-prod.
 
 Ask instead of guessing when:
 
-- the page shows a login wall: the saved login is missing or expired, or the QA Chrome has been signed out
+- the page shows a login wall and stubbing the session is not available or does not get past it: the saved login is missing or expired, or the QA Chrome has been signed out
 - the flow needs data you cannot create or reuse, for example campaigns, strategies and tactics in Atlas
 - the correct URL is not in the issue and not the default
 
@@ -97,6 +102,13 @@ When you are attached to the QA Chrome, the human signs in in that window instea
 Then follow the waiting posture in the `paperclip` skill: confirm the interaction is saved and pending, set the issue to `in_review`, and exit. You are woken with the answer; resume at Step 5 with the URL they gave.
 
 Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later isolated run starts signed in. An attached run keeps the login in the QA Chrome profile instead.
+
+### Verifying against stubs
+
+- Before relying on a stub, confirm it matches what the real API returns: read the handler or the shared type, or compare with a recorded response. A stub you invented proves nothing.
+- Keep a list of every stubbed URL pattern. An unstubbed `/api` call that fails is a gap in the stubs, not a finding.
+- Server-rendered pages fetch on the server, so `browser_route` never sees those calls. If the data does not change when you change a stub, say so and fall back to real data.
+- State it in the verdict: "UI against stubs", with the stubbed URLs. Do not describe a stubbed pass as end-to-end.
 
 ## Step 5 — Explore and judge
 
@@ -118,4 +130,4 @@ Post one comment and the status change in the same `PATCH`:
 
 A failure comment must let the implementer reproduce without asking you anything: exact URL, exact actions, observed result.
 
-Say plainly what you did not test. Do not approve a flow you could only partly exercise; request changes or block it with the gap named.
+Say plainly what you did not test, including every URL you stubbed. Do not approve a flow you could only partly exercise; request changes or block it with the gap named.
