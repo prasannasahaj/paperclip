@@ -16,7 +16,7 @@ const ENABLED: PlaywrightBrowserConfig = {
   storageStatePath: null,
   cdpEndpoint: null,
   allowedOrigins: [],
-  mockNetwork: false,
+  mockNetwork: true,
   initScripts: [],
   initPages: [],
 };
@@ -39,7 +39,7 @@ describe("readPlaywrightBrowserConfig", () => {
       storageStatePath: null,
       cdpEndpoint: null,
       allowedOrigins: [],
-      mockNetwork: false,
+      mockNetwork: true,
       initScripts: [],
       initPages: [],
     });
@@ -72,8 +72,10 @@ describe("readPlaywrightBrowserConfig", () => {
     });
   });
 
-  it("enables network mocking only when mockNetwork is exactly true", () => {
-    expect(readPlaywrightBrowserConfig({ browser: { enabled: true, mockNetwork: "true" } }).mockNetwork).toBe(false);
+  it("lets the agent mock network requests unless mockNetwork is exactly false", () => {
+    expect(readPlaywrightBrowserConfig({ browser: { enabled: true } }).mockNetwork).toBe(true);
+    expect(readPlaywrightBrowserConfig({ browser: { enabled: true, mockNetwork: "false" } }).mockNetwork).toBe(true);
+    expect(readPlaywrightBrowserConfig({ browser: { enabled: true, mockNetwork: false } }).mockNetwork).toBe(false);
   });
 });
 
@@ -168,16 +170,15 @@ describe("buildPlaywrightBrowserLaunch", () => {
     );
   });
 
-  it("offers no network mocking tool unless the agent asks for it", () => {
+  it("gives the agent the browser_route mocking tool by default", () => {
     const { args } = launch(ENABLED).server;
-    expect(args).not.toContain("--caps");
+    expect(args[args.indexOf("--caps") + 1]).toBe("network");
     expect(args).not.toContain("--init-script");
     expect(args).not.toContain("--init-page");
   });
 
-  it("enables the browser_route mocking tool when mockNetwork is set", () => {
-    const { args } = launch({ ...ENABLED, mockNetwork: true }).server;
-    expect(args[args.indexOf("--caps") + 1]).toBe("network");
+  it("withholds the browser_route mocking tool when mockNetwork is switched off", () => {
+    expect(launch({ ...ENABLED, mockNetwork: false }).server.args).not.toContain("--caps");
   });
 
   it("passes each init script and init page as its own flag so one cannot swallow the next argument", () => {

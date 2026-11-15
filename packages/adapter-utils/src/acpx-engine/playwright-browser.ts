@@ -70,7 +70,7 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
     storageStatePath,
     cdpEndpoint,
     allowedOrigins,
-    mockNetwork: browser.mockNetwork === true,
+    mockNetwork: browser.mockNetwork !== false,
     initScripts: readPathList(browser.initScripts),
     initPages: readPathList(browser.initPages),
   };

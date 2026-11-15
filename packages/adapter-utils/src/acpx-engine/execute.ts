@@ -859,12 +859,10 @@ async function attachPlaywrightBrowserServer(input: {
     env: input.env,
   });
   input.mcpServers.push(launch.server);
-  if (browser.mockNetwork || browser.initScripts.length > 0 || browser.initPages.length > 0) {
-    await input.onLog(
-      "stdout",
-      `[paperclip] Playwright browser network stubbing on: mockNetwork=${browser.mockNetwork}, ${browser.initScripts.length} init script(s), ${browser.initPages.length} init page(s).\n`,
-    );
-  }
+  await input.onLog(
+    "stdout",
+    `[paperclip] Playwright browser network stubbing: browser_route ${browser.mockNetwork ? "available" : "off"}, ${browser.initScripts.length} init script(s), ${browser.initPages.length} init page(s).\n`,
+  );
   if (launch.cdpEndpoint) {
     await input.onLog(
       "stdout",
