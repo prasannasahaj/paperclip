@@ -64,7 +64,7 @@ Work one action at a time and read each result before choosing the next:
 - `browser_take_screenshot` saves an image file as evidence. Images are not shown to you unless the agent has `browser.images` enabled, so judge from the snapshot and keep the file as proof.
 - Watch `browser_console_messages` and `browser_network_requests` after each action that touches the change.
 
-When the agent has `browser.mockNetwork`, you also have `browser_route`: it answers requests matching a URL pattern with a status and body you choose. The agent's `browser.initPages` and `browser.initScripts` may already have stubbed the API and faked the signed-in session before your first action; the first log line says so.
+You also have `browser_route`: it answers requests matching a URL pattern with a status and body you choose. This is how you stub the application so you can reach the screen under test without signing in or seeding data. Step 4 says how to write the stubs. If `browser_route` is missing, the agent has `browser.mockNetwork` switched off; use the other routes in Step 4.
 
 If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port yourself (Paperclip does that when the agent has `browser.cdpEndpoint`), and do not write Playwright scripts.
 
@@ -74,7 +74,7 @@ The human may have set things up before handing over. The issue or the hand-off 
 
 Get the state you need in this order:
 
-1. **Stub it** when the check is about how the page renders data, and the run log says network stubbing is on or you have `browser_route`. Deep-link to the page, serve it responses you control, and cover the empty, error and slow cases the stubs make cheap. No login and no seeded data are needed. See "Verifying against stubs" below.
+1. **Write the stubs yourself** when the check is about how the page renders what the backend gives it. You already know from Step 1 which screen changed and which API calls it makes. No login and no seeded data are needed. See "Writing the stubs" below.
 2. **Reuse an existing campaign** that fits. Ask for one, or find it from the read-only database tools if you have them.
 3. **Create it through the application's API** when the data is cheap to create and the API is available to you.
 4. **Ask the human** to create it or perform the action, as below.
@@ -103,12 +103,22 @@ Then follow the waiting posture in the `paperclip` skill: confirm the interactio
 
 Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later isolated run starts signed in. An attached run keeps the login in the QA Chrome profile instead.
 
-### Verifying against stubs
+### Writing the stubs
 
-- Before relying on a stub, confirm it matches what the real API returns: read the handler or the shared type, or compare with a recorded response. A stub you invented proves nothing.
-- Keep a list of every stubbed URL pattern. An unstubbed `/api` call that fails is a gap in the stubs, not a finding.
-- Server-rendered pages fetch on the server, so `browser_route` never sees those calls. If the data does not change when you change a stub, say so and fall back to real data.
-- State it in the verdict: "UI against stubs", with the stubbed URLs. Do not describe a stubbed pass as end-to-end.
+Derive them from what Step 1 found; do not ask for stub files.
+
+1. **List the calls.** From the code around the change, list every request the screen makes on load and on each action you will take: method, URL pattern, and what the page does with the response.
+2. **Build each response from a real source**, in this order: an existing test fixture or mock for the same endpoint, the shared type or schema, the handler's return value. Fill every field the page reads, with values that make the case you are testing visible, such as a long name, an empty list, or the status the change handles. Never invent a field the real response does not have.
+3. **Register a catch-all first, then the specifics.** `browser_route` pattern `**/api/**` with status `599` and body `unstubbed`, then one call per stub. A later route wins over an earlier one, so the specifics override the catch-all. An unstubbed call that fails is a gap in your stubs, not a finding.
+4. **Fake the signed-in state.** Stub the endpoint the app calls to learn who the user is. If the app instead reads a token from storage, set it with `browser_evaluate` and reload. If the app validates tokens against an identity provider, stub that provider's discovery and key endpoints too; if that is not enough to get past sign-in, fall back to the saved login or ask the human.
+5. **Deep-link to the page** and work the cases the stubs make cheap: change a stub with `browser_route` between actions to show an empty list, an error status, or a slow response.
+6. **Re-register after a restart.** Routes last as long as the browser. If a tool result shows the page behaving as if unstubbed, the browser was restarted; register them again.
+
+Limits you must report:
+
+- Server-rendered pages fetch on the server, so `browser_route` never sees those calls. If the page does not change when you change a stub, say so and fall back to real data.
+- A stub you could not tie to a real source in step 2 proves nothing. Mark it as a guess in the verdict.
+- Stubs prove how the page renders what it is given, not that the backend returns that data. The verdict says "UI against stubs", lists the stubbed URLs, and never calls a stubbed pass end-to-end. Do the backend half separately, as above.
 
 ## Step 5 — Explore and judge
 
