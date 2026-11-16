@@ -486,7 +486,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           biller: costEvents.biller,
           billingType: costEvents.billingType,
           model: costEvents.model,
-          costCents: sumAsNumber(costEvents.costCents),
+          costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
           eventCount: sql<number>`count(*)::int`,
           estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
@@ -508,7 +508,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         .from(costEvents)
         .where(and(...conditions))
         .groupBy(costEvents.provider, costEvents.biller, costEvents.billingType, costEvents.model)
-        .orderBy(desc(sumAsNumber(costEvents.costCents)));
+        .orderBy(desc(displayedCostCents));
     },
 
     byBiller: async (companyId: string, range?: CostDateRange) => {
@@ -520,7 +520,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
       return db
         .select({
           biller: costEvents.biller,
-          costCents: sumAsNumber(costEvents.costCents),
+          costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
           eventCount: sql<number>`count(*)::int`,
           estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
@@ -544,7 +544,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
         .from(costEvents)
         .where(and(...conditions))
         .groupBy(costEvents.biller)
-        .orderBy(desc(sumAsNumber(costEvents.costCents)));
+        .orderBy(desc(displayedCostCents));
     },
 
     /**
@@ -567,7 +567,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
             .select({
               provider: costEvents.provider,
               biller: sql<string>`case when count(distinct ${costEvents.biller}) = 1 then min(${costEvents.biller}) else 'mixed' end`,
-              costCents: sumAsNumber(costEvents.costCents),
+              costCents: displayedCostCents,
           costCentsExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
               inputTokens: sumAsNumber(ordinaryInputTokens),
               cachedInputTokens: sumAsNumber(costEvents.cachedInputTokens),
@@ -582,7 +582,7 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
               ),
             )
             .groupBy(costEvents.provider)
-            .orderBy(desc(sumAsNumber(costEvents.costCents)));
+            .orderBy(desc(displayedCostCents));
 
           return rows.map((row) => ({
             provider: row.provider,
