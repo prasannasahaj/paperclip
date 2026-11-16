@@ -71,6 +71,7 @@ export interface SubscriptionUsage {
   cachedInputTokens: number;
   outputTokens: number;
   costCents: string;
+  apiEquivalentCents?: string;
   eventCount: number;
   estimatedEventCount: number;
   unpricedEventCount: number;
