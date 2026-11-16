@@ -561,7 +561,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     expect(byProjectRow?.costCents).toBeCloseTo(500, 5);
     expect(byAgentModelRow?.costCents).toBeCloseTo(500, 5);
     expect(issueSummary.costCents).toBeCloseTo(500, 5);
-    expect((await costs.summary(companyId)).spendCents).toBe(0);
+    expect((await costs.summary(companyId)).spendCents).toBeCloseTo(500, 5);
   });
 
   it("aggregates cost event sums above int32 without raising Postgres integer overflow", async () => {
