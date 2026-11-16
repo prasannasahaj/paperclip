@@ -322,6 +322,20 @@ describe("Shared Costs surfaces", () => {
     queryClient.clear();
   });
 
+  it("adds the API-equivalent value of subscription usage to API spend", async () => {
+    for (const mock of Object.values(costsApiMocks)) mock.mockResolvedValue([]);
+    costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });
+    costsApiMocks.summary.mockResolvedValue({ spendCents: 4797, budgetCents: 0, pricingComplete: true });
+    costsApiMocks.financeSummary.mockResolvedValue({ netCents: 0, debitCents: 0, creditCents: 0, estimatedDebitCents: 0, eventCount: 0 });
+    const report = await subscriptionsMocks.report();
+    subscriptionsMocks.report.mockResolvedValue({ ...report, api: { ...report.api, costCents: "200" }, subscription: { ...report.subscription, apiEquivalentCents: "4797" } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(container);
+    await act(async () => root.render(<MemoryRouter><QueryClientProvider client={queryClient}><Costs /></QueryClientProvider></MemoryRouter>));
+    const card = (label: string) => [...container.querySelectorAll("div")].find(node => node.textContent === label)?.closest('[data-slot="card"]');
+    await act(async () => { await vi.waitFor(() => expect(card("API spend")?.textContent).toContain("$49.97")); });
+  });
+
   it("keeps monthly subscription fees through date changes and failed background reloads", async () => {
     for (const mock of Object.values(costsApiMocks)) mock.mockResolvedValue([]);
     costsApiMocks.byUser.mockResolvedValue({ activeUserCount: 1, rows: [] });

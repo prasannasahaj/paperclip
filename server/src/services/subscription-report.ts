@@ -2,16 +2,17 @@ import { and, eq, exists, gte, isNull, lte, notExists, or, sql } from "drizzle-o
 import { aiSubscriptions, aiSubscriptionPrices, aiSubscriptionConnections, connectionGrants, connectionGrantMembers, agents, authUsers, companyMemberships, costEvents, type Db } from "@paperclipai/db";
 import { addCents, monthlySubscriptionCents, type SubscriptionCostReport, type SubscriptionPrice, type SubscriptionUsage } from "@paperclipai/shared";
 import { withAccountingReadSnapshot } from "./accounting-transaction.js";
-import { ordinaryInputTokens } from "./costs.js";
+import { ordinaryInputTokens, subscriptionApiEquivalentCents } from "./costs.js";
 import { resolveCostDateRange, type CostDateRange } from "./cost-date-range.js";
 import { canEditSubscription, canonicalSubscriptionId, type SubscriptionActor } from "./subscriptions.js";
 
 export function emptySubscriptionUsage(): SubscriptionUsage {
-  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costCents: "0.0000000", eventCount: 0, estimatedEventCount: 0, unpricedEventCount: 0 };
+  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costCents: "0.0000000", apiEquivalentCents: "0.0000000", eventCount: 0, estimatedEventCount: 0, unpricedEventCount: 0 };
 }
 
 function addUsage(target: SubscriptionUsage, source: SubscriptionUsage) {
   target.costCents = addCents(target.costCents, source.costCents);
+  target.apiEquivalentCents = addCents(target.apiEquivalentCents ?? 0, source.apiEquivalentCents ?? 0);
   for (const key of ["inputTokens", "cachedInputTokens", "outputTokens", "eventCount", "estimatedEventCount", "unpricedEventCount"] as const) target[key] += Number(source[key]);
 }
 
@@ -62,6 +63,7 @@ export async function subscriptionCostReport(db: Db, companyId: string, actor: S
         cachedInputTokens: sql<number>`coalesce(sum(${costEvents.cachedInputTokens}), 0)::double precision`,
         outputTokens: sql<number>`coalesce(sum(${costEvents.outputTokens}), 0)::double precision`,
         costCents: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
+        apiEquivalentCents: sql<string>`round(${subscriptionApiEquivalentCents}::numeric, 7)::text`,
         eventCount: sql<number>`count(*)::int`,
         estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
         unpricedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'unpriced' and ${costEvents.billingType} <> 'subscription_included')::int`,

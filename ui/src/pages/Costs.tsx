@@ -250,6 +250,7 @@ export function Costs({
   });
   const invalidateSubscriptions = () => { void queryClient.invalidateQueries({ queryKey: ["cost-subscriptions", companyId] }); };
   const discoveryCompany = useRef<string | null>(null);
+  const subscriptionEquivalentCents = Number(subscriptions?.subscription.apiEquivalentCents ?? 0);
   const discoverSubscriptions = useMutation({ mutationFn: (id: string) => subscriptionsApi.refresh(id),
     onSuccess: (_data, id) => { void queryClient.invalidateQueries({ queryKey: ["cost-subscriptions", id] }); } });
   useEffect(() => {
@@ -666,9 +667,10 @@ export function Costs({
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <MetricTile
               label="API spend"
-              value={subscriptions ? subscriptions.api.unpricedEventCount === subscriptions.api.eventCount && subscriptions.api.eventCount > 0 ? "—" : formatCents(Number(subscriptions.api.costCents)) : "—"}
+              value={subscriptions ? subscriptions.api.unpricedEventCount === subscriptions.api.eventCount && subscriptions.api.eventCount > 0 && subscriptionEquivalentCents === 0 ? "—" : formatCents(Number(subscriptions.api.costCents) + subscriptionEquivalentCents) : "—"}
               subtitle={subscriptions ? <div className="space-y-1">
                 <CostEstimateLabel eventCount={subscriptions.api.eventCount} estimatedEventCount={subscriptions.api.estimatedEventCount} />
+                {subscriptionEquivalentCents > 0 && <div>incl. {formatCents(subscriptionEquivalentCents)} subscription API-equivalent (est.)</div>}
                 <div><SubscriptionTokenUsage usage={subscriptions.api} /></div>
               </div> : subscriptionError ? "API usage is unavailable" : "API usage is loading"}
               icon={DollarSign}
