@@ -434,6 +434,18 @@ describe("durable subscription reporting", () => {
     expect(report.accounts[0].usage.eventCount).toBe(2);
     expect(report.monthlyTotals[0].amountCents).toBe("2000.0000000");
   });
+  it("reports the API-equivalent value of subscription usage separately from billed cost", async () => {
+    const c = await company(), id = await verifiedConnection(await connection(c));
+    const agentId = randomUUID();
+    await db.insert(agents).values({ id: agentId, companyId: c, name: "Agent", role: "engineer", adapterType: "claude_local" });
+    await db.insert(costEvents).values({ companyId: c, agentId, subscriptionId: id, provider: "anthropic", biller: "anthropic", billingType: "subscription_included", model: "sonnet",
+      costCents: 0, inputTokens: 1_000_000, cachedInputTokens: 10_000_000, outputTokens: 100_000, receiptHash: "normalized", occurredAt: new Date("2026-10-08T00:00:00Z") });
+    await event(c, null, "metered_api", "123");
+    const report = await subscriptionCostReport(db, c, owner, { from: new Date("2026-10-01"), to: new Date("2026-11-01") });
+    expect(Number(report.subscription.apiEquivalentCents)).toBeCloseTo(500, 5);
+    expect(report.subscription.costCents).toBe("0.0000000");
+    expect(Number(report.api.apiEquivalentCents)).toBe(0);
+  });
   it("snapshots account attribution, rejects forged attribution, and preserves receipt replay", async () => {
     const c = await company(), input = await connection(c), service = subscriptionService(db);
     const original = await service.register(input);

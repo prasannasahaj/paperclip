@@ -563,7 +563,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
     expect(byProjectRow?.costCents).toBeCloseTo(500, 5);
     expect(byAgentModelRow?.costCents).toBeCloseTo(500, 5);
     expect(issueSummary.costCents).toBeCloseTo(500, 5);
-    expect((await costs.summary(companyId)).spendCents).toBe(0);
+    expect((await costs.summary(companyId)).spendCents).toBeCloseTo(500, 5);
   });
 
   it("splits an issue tree's usage by agent, largest token user first, including unpriced subscription usage", async () => {

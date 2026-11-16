@@ -35,7 +35,7 @@ function apiEquivalentRate(kind: "input" | "cachedInput" | "output") {
   return sql`(case ${sql.join(branches, sql` `)} else 0 end)`;
 }
 
-const subscriptionApiEquivalentCents = sql<number>`coalesce(sum(case
+export const subscriptionApiEquivalentCents = sql<number>`coalesce(sum(case
   when ${costEvents.billingType} in (${sql.join(SUBSCRIPTION_BILLING_TYPES.map((value) => sql`${value}`), sql`, `)})
     then (${ordinaryInputTokens} * ${apiEquivalentRate("input")}
       + ${costEvents.cachedInputTokens} * ${apiEquivalentRate("cachedInput")}
@@ -241,8 +241,8 @@ export function costService(db: Db, _budgetHooks: BudgetServiceHooks = {}) {
           estimatedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'estimated')::int`,
           unknownBillingEventCount: sql<number>`count(*) filter (where ${costEvents.billingType} = 'unknown')::int`,
           unpricedEventCount: sql<number>`count(*) filter (where ${costEvents.costStatus} = 'unpriced' and ${costEvents.billingType} <> 'subscription_included')::int`,
-          total: sumAsNumber(costEvents.costCents),
-          totalExact: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text`,
+          total: displayedCostCents,
+          totalExact: sql<string>`round((coalesce(sum(${costEvents.costCents}), 0) + ${subscriptionApiEquivalentCents})::numeric, 7)::text`,
         })
         .from(costEvents)
         .where(and(...conditions));
