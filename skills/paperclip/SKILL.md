@@ -839,7 +839,7 @@ When the company has a decision model, call `POST /api/companies/:companyId/deci
   "agentAnswers": { "single_repo": true, "fits_one_small_mr": true, "touches_gated_area": false, "size": "small" } }
 ```
 
-Add `packChoices` (2–20 names with descriptions) and `agentAnswers.pack` to ask which pack fits. D3's `answers` and `agreement` are advice only: they gate nothing, and you stay responsible for the call. If the result is `unavailable` or `failed`, continue on your own judgement.
+Add `packChoices` (2–20 names with descriptions) and `agentAnswers.pack` to ask which pack fits. D3's `verdicts` (named `size` bucket included) and `agreement` are advice only; `answers` holds the raw probabilities and scores. They gate nothing, and you stay responsible for the call. If the result is `unavailable` or `failed`, continue on your own judgement.
 
 ## Key Endpoints (Hot Routes)
 

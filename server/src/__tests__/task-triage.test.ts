@@ -94,6 +94,7 @@ describe("task triage decision route", () => {
     const res = await request(appAs(f.agent)).post(f.url).send({ issueId: f.issueId, task: SECRET_TASK, context: SECRET_CONTEXT, agentAnswers });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ status: "succeeded", answers: d3Outcome.answers,
+      verdicts: { single_repo: true, fits_one_small_mr: true, touches_gated_area: false, size: "medium" },
       agreement: { single_repo: true, fits_one_small_mr: false, touches_gated_area: false, size: true } });
     expect(Object.keys(sentRequest().questions).sort()).toEqual(["fits_one_small_mr", "single_repo", "size", "touches_gated_area"]);
     expect(JSON.stringify(sentRequest().state)).toContain(SECRET_TASK);
@@ -102,6 +103,21 @@ describe("task triage decision route", () => {
     expect(entry).toMatchObject({ actorType: "agent", actorId: f.agentId, agentId: f.agentId, runId: f.runId, entityType: "issue", entityId: f.issueId });
     expect(entry.details).toMatchObject({ d3Answers: d3Outcome.answers, agentAnswers, agreement: res.body.agreement });
     expect(JSON.stringify(entry)).not.toContain("SECRET");
+  });
+
+  it.each([
+    { score: 0.0033, agentSize: "small", verdict: "small", agrees: true },
+    { score: 1.4, agentSize: "medium", verdict: "medium", agrees: true },
+    { score: 1.925, agentSize: "small", verdict: "large", agrees: false },
+    { score: 1.925, agentSize: "large", verdict: "large", agrees: true },
+  ])("names the size bucket and compares it when D3 returns the fractional score $score", async ({ score, agentSize, verdict, agrees }) => {
+    const f = await fixture();
+    providerCall.mockResolvedValue({ ...structuredClone(d3Outcome), answers: { ...structuredClone(d3Outcome.answers), size: { type: "score", score } } });
+    const res = await request(appAs(f.board)).post(f.url).send({ task: "Fix it", agentAnswers: { size: agentSize } });
+    expect(res.body.verdicts.size).toBe(verdict);
+    expect(res.body.agreement.size).toBe(agrees);
+    const [entry] = await triageEntries(f.companyId);
+    expect(entry.details).toMatchObject({ verdicts: { size: verdict }, agreement: { size: agrees } });
   });
 
   it("forbids an agent whose run is no longer active", async () => {
