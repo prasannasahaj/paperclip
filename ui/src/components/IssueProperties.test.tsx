@@ -39,6 +39,7 @@ const mockIssuesApi = vi.hoisted(() => ({
   list: vi.fn(),
   getContextUsage: vi.fn(),
   getCostSummary: vi.fn(),
+  getMaturityScorecard: vi.fn(),
   getDocument: vi.fn(),
   listAcceptedPlanDecompositions: vi.fn(),
   listAttachments: vi.fn(),
@@ -649,6 +650,7 @@ describe("IssueProperties", () => {
     mockIssuesApi.list.mockResolvedValue([]);
     mockIssuesApi.getContextUsage.mockResolvedValue(null);
     mockIssuesApi.getCostSummary.mockResolvedValue(null);
+    mockIssuesApi.getMaturityScorecard.mockResolvedValue(null);
     mockIssuesApi.getDocument.mockResolvedValue(null);
     mockIssuesApi.listAcceptedPlanDecompositions.mockResolvedValue([]);
     mockIssuesApi.listAttachments.mockResolvedValue([]);
