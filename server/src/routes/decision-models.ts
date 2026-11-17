@@ -1,17 +1,19 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { DECISION_TEST_REQUEST, updateDecisionModelSchema } from "@paperclipai/shared";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { DECISION_TEST_REQUEST, taskTriageRequestSchema, updateDecisionModelSchema } from "@paperclipai/shared";
+import { assertBoard, assertBoardOrAgent, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { canManageAiConnections } from "./ai-connections.js";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { decisionModelService, settingsDecisionTest } from "../services/decision-models.js";
 import { heartbeatService } from "../services/heartbeat.js";
+import { taskTriageService } from "../services/task-triage.js";
 import { parseCostDateRange, parseCostLimit } from "./costs.js";
 
 export function decisionModelRoutes(db: Db) {
   const router = Router();
   const service = decisionModelService(db, { budgetHooks: { cancelWorkForScope: heartbeatService(db).cancelBudgetScopeWork } });
+  const triage = taskTriageService(db, service);
   router.get("/companies/:companyId/decision-model", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId); assertBoard(req);
@@ -36,6 +38,12 @@ export function decisionModelRoutes(db: Db) {
     if (!(await canManageAiConnections(db, req, companyId))) throw forbidden("Manage connections permission is required");
     // The client cannot supply a prompt, model, identity, or background flag.
     res.json(await service.decide({ companyId, actor: req.actor, feature: settingsDecisionTest }, DECISION_TEST_REQUEST));
+  });
+  router.post("/companies/:companyId/decision-model/triage", validate(taskTriageRequestSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId); assertBoardOrAgent(req);
+    const { actorType, actorId, agentId, runId } = getActorInfo(req);
+    res.json(await triage.triage({ companyId, actor: req.actor, activityActor: { actorType, actorId, agentId, runId } }, req.body));
   });
   router.get("/companies/:companyId/decision-model/history", async (req, res) => {
     const companyId = req.params.companyId as string;

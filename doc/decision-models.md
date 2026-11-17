@@ -67,9 +67,16 @@ All paths are under `/api/companies/:companyId/decision-model`:
 | `PUT /` | Connection manager; validates and audits configuration |
 | `GET /availability` | Authenticated company caller; local authorization check |
 | `POST /test` | Connection manager; fixed server-owned three-question sample, ignoring client prompts/identity |
+| `POST /triage` | Board user or agent in an active run; fixed server-owned task triage questions, shadow-logged |
 | `GET /history` | Existing company cost-read rules; date bounds and limit up to 500 |
 
 There is no general HTTP decision execution endpoint.
+
+## Task triage (shadow mode)
+
+`POST /triage` runs the registered `tasks.triage` feature. It advises only and gates nothing. Callers send `task` (up to 8,000 characters), optional `context` (up to 16,000), an optional `issueId`, optional `packChoices` (2–20 pack names with descriptions) and their own `agentAnswers`. Unknown fields are rejected, so callers cannot supply questions or prompts.
+
+The server asks `single_repo`, `fits_one_small_mr`, `touches_gated_area` (schema or API contract change, more than one repository, bidder/RTB/pacing/budget/billing logic, irreversible operations, authentication/permissions), `size` (small, medium, large) and, only when `packChoices` is sent, `pack`. A `succeeded` result returns `{ status, answers, agreement }` and writes one `decision_model.triage_shadow` activity entry on the issue (or the company when no issue resolves) with D3's answers, the caller's answers and a per-question agreement flag. Booleans agree when D3's probability is at least 0.5 on the same side. The entry never contains the task text or context. `unavailable` and `failed` results return HTTP 200 unchanged, and the caller continues on its own judgement.
 
 ## Provider dependencies and verification
 

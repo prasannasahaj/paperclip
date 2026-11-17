@@ -64,6 +64,44 @@ export const DECISION_TEST_REQUEST: DecisionRequest = {
     severity: { type: "score", instructions: "How severe is the product disruption?", criteria: ["Product works", "Some functionality is unavailable", "Product cannot be used"] },
   },
 };
+export const TASK_TRIAGE_SIZES = ["small", "medium", "large"] as const;
+export type TaskTriageSize = typeof TASK_TRIAGE_SIZES[number];
+export const TASK_TRIAGE_QUESTIONS = {
+  single_repo: { type: "boolean", instructions: "Can this task be completed by changing a single code repository?" },
+  fits_one_small_mr: { type: "boolean", instructions: "Can this task be delivered as one small, reviewable merge request of roughly 200 changed lines or fewer?" },
+  touches_gated_area: { type: "boolean", instructions: "Does this task touch a gated area: a database schema or API contract change, work spanning more than one repository, bidder/RTB/pacing/budget/billing logic, an irreversible operation, or authentication/permissions?" },
+  size: { type: "score", instructions: "How large is this task?", criteria: [
+    "Small: one focused change a single engineer finishes quickly",
+    "Medium: several related changes that still fit one deliverable",
+    "Large: needs splitting into multiple deliverables",
+  ] },
+} satisfies DecisionRequest["questions"];
+export const TASK_TRIAGE_PACK_INSTRUCTIONS = "Which context pack best fits this task?";
+const packName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/);
+export const taskTriageAgentAnswersSchema = z.object({
+  single_repo: z.boolean().optional(),
+  fits_one_small_mr: z.boolean().optional(),
+  touches_gated_area: z.boolean().optional(),
+  size: z.enum(TASK_TRIAGE_SIZES).optional(),
+  pack: packName.optional(),
+}).strict();
+export type TaskTriageAgentAnswers = z.infer<typeof taskTriageAgentAnswersSchema>;
+export const taskTriageRequestSchema = z.object({
+  issueId: z.string().uuid().optional(),
+  task: z.string().trim().min(1).max(8000),
+  context: z.string().max(16000).optional(),
+  packChoices: z.record(packName, z.string().trim().min(1).max(500))
+    .refine(v => Object.keys(v).length >= 2 && Object.keys(v).length <= 20, { message: "Provide 2–20 pack choices" }).optional(),
+  agentAnswers: taskTriageAgentAnswersSchema.optional(),
+}).strict().refine(v => !v.agentAnswers?.pack || Object.hasOwn(v.packChoices ?? {}, v.agentAnswers.pack), {
+  message: "agentAnswers.pack must be one of packChoices", path: ["agentAnswers", "pack"],
+});
+export type TaskTriageRequest = z.infer<typeof taskTriageRequestSchema>;
+export type TaskTriageQuestion = keyof TaskTriageAgentAnswers;
+export type TaskTriageAgreement = Partial<Record<TaskTriageQuestion, boolean>>;
+export type TaskTriageResult =
+  | { status: "succeeded"; answers: Record<string, DecisionAnswer>; agreement: TaskTriageAgreement }
+  | Exclude<DecisionResult, { status: "succeeded" }>;
 
 /** Native endpoints only; OpenRouter's official routing metadata is compatible. */
 export function decisionProviderForConnection(metadata: { provider: string; method: string; routing?: { kind: string; baseUrl?: string; auth?: string } }): DecisionProvider | null {
