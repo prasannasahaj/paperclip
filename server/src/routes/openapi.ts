@@ -272,6 +272,7 @@ import {
   resolveIssueRecoveryActionSchema,
   recoverWorkspaceSchema,
   taskRetrySchema,
+  respawnChildSchema,
   retryWorkspaceExportSchema,
   reconstructWorkspaceSchema,
   resumeWorkspaceFinalizationSchema,
@@ -11282,6 +11283,22 @@ registerCurrentRoute({
   path: "/api/issues/{id}/maturity-scorecard",
   tags: ["costs"],
   summary: "Get issue maturity scorecard",
+});
+
+registerCurrentRoute({
+  method: "get",
+  path: "/api/issues/{id}/handoff",
+  tags: ["issues"],
+  summary: "Get the handoff of a child task for a successor",
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/issues/{id}/respawn",
+  tags: ["issues"],
+  summary: "Respawn a failed or stalled child task as a successor",
+  body: respawnChildSchema,
+  responses: { 200: r.ok(), 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
 });
 
 registerCurrentRoute({
