@@ -18,6 +18,7 @@ import {
   toggleAllGitHubRepositoriesSchema,
   createAiConnectionSchema,
   updateDecisionModelSchema,
+  taskTriageRequestSchema,
   updatePromptInjectionPreventionSchema,
   updateAgentObservabilitySchema,
   agentObservabilityRevisionSchema,
@@ -12298,6 +12299,12 @@ registerCurrentRoute({
   description: companyModelServiceSettingsPage("Decision model"),
   summary: "Run the fixed three-question setup test and record its usage as a connection manager",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+registerCurrentRoute({
+  method: "post", path: "/api/companies/{companyId}/decision-model/triage", tags: ["decision-models"],
+  description: "Shadow-mode advice only; gates nothing. Callable by a board user or an agent in an active run. The server owns the questions (single_repo, fits_one_small_mr, touches_gated_area, size, and pack when packChoices is sent); callers send task text, optional context and their own agentAnswers, never prompts. A succeeded result returns D3 answers and per-question agreement and logs decision_model.triage_shadow without the task text. Unavailable and failed results return 200 unchanged so the caller continues on its own judgement.",
+  summary: "Ask D3 the fixed billed task triage questions and log agreement with the caller's own answers", body: taskTriageRequestSchema,
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
 });
 registerCurrentRoute({
   method: "get", path: "/api/companies/{companyId}/decision-model/history", tags: ["decision-models"],

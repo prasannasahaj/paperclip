@@ -830,6 +830,17 @@ PUT /api/issues/{issueId}/documents/plan
 
 If `plan` already exists, first `GET /api/issues/{issueId}/documents/plan` and read its current body and `latestRevisionId`. Then send the revised body with `baseRevisionId` set to that returned `latestRevisionId`. The GET field is `latestRevisionId`; the PUT field is `baseRevisionId`. Omitting it on an update returns `409`. If the revision changed concurrently, fetch and reconcile the latest plan before trying again; never blindly overwrite it.
 
+## Task Triage (D3, shadow mode)
+
+When the company has a decision model, call `POST /api/companies/:companyId/decision-model/triage` once per task, after you have formed your own view:
+
+```json
+{ "issueId": "<task id>", "task": "<task summary>", "context": "<optional>",
+  "agentAnswers": { "single_repo": true, "fits_one_small_mr": true, "touches_gated_area": false, "size": "small" } }
+```
+
+Add `packChoices` (2–20 names with descriptions) and `agentAnswers.pack` to ask which pack fits. D3's `answers` and `agreement` are advice only: they gate nothing, and you stay responsible for the call. If the result is `unavailable` or `failed`, continue on your own judgement.
+
 ## Key Endpoints (Hot Routes)
 
 | Action                                | Endpoint                                                                                                                        |
@@ -857,6 +868,7 @@ If `plan` already exists, first `GET /api/issues/{issueId}/documents/plan` and r
 | List agents                           | `GET /api/companies/:companyId/agents`                                                                                          |
 | Secret proposals                      | `POST\|GET /api/agents/me/secret-proposals` • `DELETE /api/agents/me/secret-proposals/:id`                                  |
 | Dashboard                             | `GET /api/companies/:companyId/dashboard`                                                                                       |
+| D3 task triage (advice only)          | `POST /api/companies/:companyId/decision-model/triage`                                                                          |
 
 Full endpoint table (company imports/exports, OpenClaw invites, company skills, routines, etc.) lives in `references/api-reference.md`.
 
