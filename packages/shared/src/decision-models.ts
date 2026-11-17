@@ -99,8 +99,9 @@ export const taskTriageRequestSchema = z.object({
 export type TaskTriageRequest = z.infer<typeof taskTriageRequestSchema>;
 export type TaskTriageQuestion = keyof TaskTriageAgentAnswers;
 export type TaskTriageAgreement = Partial<Record<TaskTriageQuestion, boolean>>;
+export type TaskTriageVerdicts = Record<string, boolean | string>;
 export type TaskTriageResult =
-  | { status: "succeeded"; answers: Record<string, DecisionAnswer>; agreement: TaskTriageAgreement }
+  | { status: "succeeded"; answers: Record<string, DecisionAnswer>; verdicts: TaskTriageVerdicts; agreement: TaskTriageAgreement }
   | Exclude<DecisionResult, { status: "succeeded" }>;
 
 /** Native endpoints only; OpenRouter's official routing metadata is compatible. */

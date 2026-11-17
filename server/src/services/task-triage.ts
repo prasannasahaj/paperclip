@@ -3,7 +3,7 @@ import { heartbeatRuns, issues, type Db } from "@paperclipai/db";
 import {
   TASK_TRIAGE_PACK_INSTRUCTIONS, TASK_TRIAGE_QUESTIONS, TASK_TRIAGE_SIZES,
   type DecisionAnswer, type DecisionRequest, type TaskTriageAgentAnswers, type TaskTriageAgreement,
-  type TaskTriageRequest, type TaskTriageResult,
+  type TaskTriageRequest, type TaskTriageResult, type TaskTriageVerdicts,
 } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -27,18 +27,24 @@ export function taskTriageDecisionRequest(input: TaskTriageRequest): DecisionReq
   return { state, questions };
 }
 
-function d3Verdict(answer: DecisionAnswer | undefined) {
-  if (!answer) return undefined;
+function nearestSize(score: number) {
+  const lastIndex = TASK_TRIAGE_SIZES.length - 1;
+  return TASK_TRIAGE_SIZES[Math.min(lastIndex, Math.max(0, Math.round(score)))];
+}
+
+function d3Verdict(answer: DecisionAnswer) {
   if (answer.type === "boolean") return answer.probability >= BOOLEAN_YES_PROBABILITY;
-  if (answer.type === "score") return TASK_TRIAGE_SIZES[answer.score];
+  if (answer.type === "score") return nearestSize(answer.score);
   return answer.choice;
 }
 
-export function triageAgreement(answers: Record<string, DecisionAnswer>, agentAnswers: TaskTriageAgentAnswers = {}): TaskTriageAgreement {
-  return Object.fromEntries(Object.entries(agentAnswers).flatMap(([question, agentAnswer]) => {
-    const verdict = d3Verdict(answers[question]);
-    return verdict === undefined ? [] : [[question, verdict === agentAnswer]];
-  }));
+export function triageVerdicts(answers: Record<string, DecisionAnswer>): TaskTriageVerdicts {
+  return Object.fromEntries(Object.entries(answers).map(([question, answer]) => [question, d3Verdict(answer)]));
+}
+
+export function triageAgreement(verdicts: TaskTriageVerdicts, agentAnswers: TaskTriageAgentAnswers = {}): TaskTriageAgreement {
+  return Object.fromEntries(Object.entries(agentAnswers).flatMap(([question, agentAnswer]) =>
+    question in verdicts ? [[question, verdicts[question] === agentAnswer]] : []));
 }
 
 async function assertAgentHasActiveRun(db: Db, companyId: string, actor: AuthorizationActor) {
@@ -62,11 +68,12 @@ export function taskTriageService(db: Db, decisions: ReturnType<typeof decisionM
     const result = await decisions.decide({ companyId: caller.companyId, actor: caller.actor, feature: taskTriageFeature, issueId: input.issueId },
       taskTriageDecisionRequest(input));
     if (result.status !== "succeeded") return result;
-    const agreement = triageAgreement(result.answers, input.agentAnswers);
+    const verdicts = triageVerdicts(result.answers);
+    const agreement = triageAgreement(verdicts, input.agentAnswers);
     await logActivity(db, { companyId: caller.companyId, ...caller.activityActor, action: "decision_model.triage_shadow",
       ...(await shadowLogEntity(db, caller.companyId, input.issueId)),
-      details: { invocationId: result.invocationId, d3Answers: result.answers, agentAnswers: input.agentAnswers ?? {}, agreement } });
-    return { status: "succeeded", answers: result.answers, agreement };
+      details: { invocationId: result.invocationId, d3Answers: result.answers, verdicts, agentAnswers: input.agentAnswers ?? {}, agreement } });
+    return { status: "succeeded", answers: result.answers, verdicts, agreement };
   }
   return { triage };
 }
