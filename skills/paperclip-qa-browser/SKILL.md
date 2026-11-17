@@ -2,8 +2,11 @@
 name: paperclip-qa-browser
 description: >
   Verify a finished task or bug fix by reading the story and the code, then
-  exploring the change by hand in a Playwright browser. Use when you are the
-  tester on an `in_review` issue and must confirm behaviour before approving.
+  exploring the change by hand in a Playwright browser against the app running
+  locally. Use for any QA, local E2E or verification task assigned to you, on
+  an `in_review` issue or not. A missing QA login, credentials file or seed
+  data is not a reason to skip the browser run: this skill covers writing the
+  network stubs that replace them.
 ---
 
 # Paperclip QA Browser
