@@ -44,7 +44,7 @@ Evidence from the cited blog (karun.me, 2026-11-10): the author could not get a 
 
 - `POST /api/companies/:companyId/decision-model/triage`, callable by an agent in an active run or by the board.
 - Fixed, server-owned question catalogue under a registered feature `tasks.triage`. Callers supply task text and optional context, never prompts.
-- Questions: `single_repo` (boolean), `fits_one_small_mr` (boolean), `touches_gated_area` (boolean: schema or API contract, multi-repo, bidder/RTB/pacing/budget/billing, irreversible, auth), `size` (score: small, medium, large), and an optional caller-supplied `pack` choice over the pack names it passes.
+- Questions: `work_type` (choice: support investigation, data analysis, product discovery, story grooming, implementation, testing, deployment, stakeholder communication), `single_repo` (boolean), `fits_one_small_mr` (boolean), `touches_gated_area` (boolean: schema or API contract, multi-repo, bidder/RTB/pacing/budget/billing, production configuration or release, live data, irreversible, auth, posting to Jira, Confluence or Slack), `size` (score: small, medium, large), and an optional caller-supplied `pack` choice over the pack names it passes.
 - Optional `agentAnswers` in the request holds the agent's own call. The server records D3 answers, the agent's answers and a per-question agreement flag in the activity log (`decision_model.triage_shadow`) and returns D3's answers.
 - Shared types and validators in `packages/shared`, route in `server/src/routes/decision-models.ts`, service in `server/src/services`, OpenAPI entry, skill documentation in `skills/paperclip/SKILL.md`, behaviour doc in `doc/decision-models.md`.
 - When D3 is unavailable the route returns the unavailable reason and agents continue on their own judgement.
@@ -56,7 +56,7 @@ Evidence from the cited blog (karun.me, 2026-11-10): the author could not get a 
 - Each live `AGENTS.md` shrinks to: persona, DOOH context, how this role works, who it talks to, and pointers to CORE and INDEX.
 - `WAY-OF-WORKING.md` updated for peers, challenge-first, stacked MRs, merge authority into the feature branch only, and the D3 shadow step.
 - Hierarchy: Delivery Lead reports to the board, not the Product Lead. Chain-of-command text updated to match.
-- Model tiers pinned per agent: Product Lead, Delivery Lead, Code Reviewer, Story Analyst, Deep-systems Engineer on Opus; engineers, QA, DOOH Planner, UX Advisor on Sonnet; Summarizer on Haiku. Escalate a tier only after a failure.
+- Model tiers pinned per agent: Product Lead, Delivery Lead, Story Analyst, Deep-systems Engineer on Opus; engineers, Code Reviewer, QA, DOOH Planner, UX Advisor on Sonnet. The Delivery Lead raises the Code Reviewer to Opus for one review task when the step touches a plan-gate area (set on the task, not the agent). Otherwise escalate a tier only after a failure.
 
 ### C. Memory
 
@@ -65,7 +65,7 @@ Use Paperclip's native learnings loop (`$AGENT_HOME/learnings/INDEX.md`, 4 KB in
 ### D. Stacked delivery
 
 - Feature branch `<JIRA-KEY>/<slug>`; step branches `<JIRA-KEY>/<slug>/NN-<step>` each with an MR into the feature branch.
-- Per step: implement with TDD, Code Reviewer pass, QA Verifier pass, then the engineer merges the step MR into the feature branch.
+- Per step: implement with TDD, Code Reviewer pass, QA Verifier pass, then the Delivery Lead merges the step MR into the feature branch.
 - A step MR over about 200 changed lines needs a written reason, or is split.
 - Final MR feature branch to main is opened for the board and never merged by an agent.
 
