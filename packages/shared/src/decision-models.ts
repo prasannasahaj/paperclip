@@ -116,7 +116,7 @@ export type TaskTriageAgreement = Partial<Record<TaskTriageQuestion, boolean>>;
 export type TaskTriageVerdicts = Record<string, boolean | string>;
 export type TaskTriageResult =
   | { status: "succeeded"; answers: Record<string, DecisionAnswer>; verdicts: TaskTriageVerdicts; agreement: TaskTriageAgreement }
-  | Exclude<DecisionResult, { status: "succeeded" }>;
+  | (Exclude<DecisionResult, { status: "succeeded" }> & { notice: string });
 
 /** Native endpoints only; OpenRouter's official routing metadata is compatible. */
 export function decisionProviderForConnection(metadata: { provider: string; method: string; routing?: { kind: string; baseUrl?: string; auth?: string } }): DecisionProvider | null {

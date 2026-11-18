@@ -72,6 +72,9 @@ function appAs(actor: AuthorizationActor) {
 async function triageEntries(companyId: string) {
   return db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "decision_model.triage_shadow")));
 }
+async function triageNotRunEntries(companyId: string) {
+  return db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "decision_model.triage_not_run"))).orderBy(activityLog.createdAt);
+}
 function sentRequest(): DecisionRequest {
   return providerCall.mock.calls[0][0].request;
 }
@@ -129,18 +132,27 @@ describe("task triage decision route", () => {
     expect(await triageEntries(f.companyId)).toHaveLength(0);
   });
 
-  it("passes unavailable and failed results through with 200 and no shadow entry", async () => {
+  it("tells the caller why triage did not run, with 200, and logs the failure on the issue instead of a shadow entry", async () => {
     const f = await fixture();
     const app = appAs(f.agent);
     providerCall.mockResolvedValueOnce({ errorCode: "timeout", receipt: decisionReceipt("openai", null) });
-    const failed = await request(app).post(f.url).send({ task: "Fix it" });
+    const failed = await request(app).post(f.url).send({ issueId: f.issueId, task: SECRET_TASK });
     expect(failed.status).toBe(200);
     expect(failed.body).toMatchObject({ status: "failed", errorCode: "timeout" });
+    expect(failed.body.notice).toContain("timeout");
     await f.service.configure(f.companyId, "alice", { ...f.binding, enabled: false });
-    const unavailable = await request(app).post(f.url).send({ task: "Fix it" });
+    const unavailable = await request(app).post(f.url).send({ issueId: f.issueId, task: SECRET_TASK });
     expect(unavailable.status).toBe(200);
-    expect(unavailable.body).toEqual({ status: "unavailable", reason: "disabled" });
+    expect(unavailable.body).toMatchObject({ status: "unavailable", reason: "disabled" });
+    expect(unavailable.body.notice).toContain("disabled");
     expect(await triageEntries(f.companyId)).toHaveLength(0);
+    const entries = await triageNotRunEntries(f.companyId);
+    expect(entries.map(e => e.details)).toMatchObject([
+      { status: "failed", errorCode: "timeout", notice: failed.body.notice },
+      { status: "unavailable", reason: "disabled", notice: unavailable.body.notice },
+    ]);
+    expect(entries[0]).toMatchObject({ actorType: "agent", agentId: f.agentId, runId: f.runId, entityType: "issue", entityId: f.issueId });
+    expect(JSON.stringify(entries)).not.toContain("SECRET");
   });
 
   it("classifies the kind of work across delivery, not only code, and compares it with the agent's own call", async () => {
