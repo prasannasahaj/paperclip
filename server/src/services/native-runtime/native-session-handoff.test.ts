@@ -175,6 +175,22 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(result).not.toContain("DERAILED SIDE QUESTION");
     });
 
+    it("tells the agent to reuse an existing rewind-state document instead of rebuilding", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      expect(await handoffFor(rewindIssueId)).toContain("If an issue document with key rewind-state-2 already exists, read it and skip the rebuild");
+    });
+
+    it("points a chained rewind at the earlier rewind-state document", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: false });
+      await db.insert(issueComments).values({ id: randomUUID(), companyId, issueId: rewindIssueId, body: `/rewind ${randomUUID()}`, authorUserId: "user", conversationSessionGeneration: 1, createdAt: new Date(500) });
+      expect(await handoffFor(rewindIssueId)).toContain("The previous session was itself a rewind: first read the issue document with key rewind-state-1");
+    });
+
+    it("does not mention an earlier rewind-state when the previous boundary was /new", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      expect(await handoffFor(rewindIssueId)).not.toContain("itself a rewind");
+    });
+
     it("omits the block when the boundary is /new", async () => {
       const { rewindIssueId } = await conversationWith(() => "/new", { previousBoundary: true });
       expect(await handoffFor(rewindIssueId)).not.toContain("Rewound conversation");

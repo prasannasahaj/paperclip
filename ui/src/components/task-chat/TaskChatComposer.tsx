@@ -60,7 +60,7 @@ import {
 import { fileKindForName, formatFileSize, isImageAttachment } from "./task-chat-attachments";
 import { parseCompactCommand, type ParsedCompactCommand } from "./compact-command";
 import { isBareRewindCommand, type RewindTarget } from "./rewind-targets";
-import { buildConversationRewindBody } from "@paperclipai/shared";
+import { buildConversationRewindBody, isConversationResetBody } from "@paperclipai/shared";
 import type { ContextCompactState } from "../ContextUsageMeter";
 import {
   MarkdownEditor,
@@ -893,6 +893,10 @@ export function TaskChatComposer({
   };
 
   function openRewindPicker() {
+    if (attachmentsRef.current.length > 0) {
+      setActionError("Remove attachments before using /rewind.");
+      return;
+    }
     if (rewindTargets.length === 0) {
       setActionError("There is no earlier message in this session to rewind to.");
       return;
@@ -903,6 +907,10 @@ export function TaskChatComposer({
 
   async function rewindTo(target: RewindTarget) {
     setRewindPickerOpen(false);
+    if (attachmentsRef.current.length > 0) {
+      setActionError("Remove attachments before using /rewind.");
+      return;
+    }
     changeBody(buildConversationRewindBody(target.id));
     await submit();
   }
@@ -997,7 +1005,11 @@ export function TaskChatComposer({
     previousTakeoverVisibleRef.current = takeoverVisible;
   }, [queuedEdit, takeoverVisible]);
 
-  const canResetPausedConversation = conversationMode && !queuedEdit && body.trim() === "/new" && attachments.length === 0;
+  const canResetPausedConversation =
+    conversationMode &&
+    !queuedEdit &&
+    attachments.length === 0 &&
+    (isConversationResetBody(body) || isBareRewindCommand(body));
 
   async function submit() {
     if (disabled || (pause && !canResetPausedConversation)) return;
