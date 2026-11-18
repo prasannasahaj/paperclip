@@ -119,6 +119,30 @@ describe("TaskChatBubble attachment chips", () => {
     expect(container.textContent).toContain("I still see the old task title.");
   });
 
+  it("renders a rewound message greyed with a Rewound label", () => {
+    flushSync(() => root!.render(
+      <ThemeProvider>
+        <TaskChatBubble item={{ id: "rewound", kind: "message", author: "human", text: "Side question", rewound: true }} />
+      </ThemeProvider>,
+    ));
+    const message = container.querySelector('[data-conversation-message]')!;
+    expect(message.getAttribute("data-rewound")).toBe("true");
+    expect(message.className).toContain("opacity-50");
+    expect(container.querySelector('[data-testid="task-chat-rewound-label"]')?.textContent).toBe("Rewound");
+    expect(container.textContent).toContain("Side question");
+  });
+
+  it("renders an ordinary message without the Rewound styling", () => {
+    flushSync(() => root!.render(
+      <ThemeProvider>
+        <TaskChatBubble item={{ id: "plain", kind: "message", author: "human", text: "Kept" }} />
+      </ThemeProvider>,
+    ));
+    const message = container.querySelector('[data-conversation-message]')!;
+    expect(message.getAttribute("data-rewound")).toBeNull();
+    expect(container.querySelector('[data-testid="task-chat-rewound-label"]')).toBeNull();
+  });
+
   it("uses initials instead of loading an external human avatar", () => {
     flushSync(() => root!.render(
       <ThemeProvider><TaskChatBubble item={{

@@ -135,6 +135,8 @@ export interface TaskChatMessageItem {
   authorAvatarUrl?: string | null;
   isCurrentUser?: boolean;
   text: string;
+  /** Dropped from the agent's context by a later /rewind; still shown, greyed. */
+  rewound?: boolean;
   /** Runner-authored output channel. Legacy adapters leave this unset. */
   channel?: "progress" | "final" | "unknown";
   /** Transport attribution for an inbound human comment. */
