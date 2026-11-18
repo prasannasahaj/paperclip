@@ -12,3 +12,7 @@ export function parseConversationRewind(body: string): ConversationRewind | null
 export function buildConversationRewindBody(targetCommentId: string): string {
   return `/rewind ${targetCommentId}`;
 }
+
+export function isConversationResetBody(body: string): boolean {
+  return body.trim() === "/new" || parseConversationRewind(body) !== null;
+}

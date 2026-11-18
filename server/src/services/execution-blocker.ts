@@ -10,7 +10,7 @@ import { canContinueCancelledRun, readRunCancellation } from "./run-cancellation
 import { canRetryStoppedRun } from "./cancelled-native-startup.js";
 import { heldRetryOffersRetry, heldTaskRetryRefusals } from "./task-retry-eligibility.js";
 import { queuedCommentIdsFromWakePayload } from "./issue-queued-comment-queue.js";
-import { EXECUTION_RECONCILIATION_CAUSES, readRunFailureCause, withoutSqlStatementText, type ExecutionBlocker } from "@paperclipai/shared";
+import { EXECUTION_RECONCILIATION_CAUSES, isConversationResetBody, readRunFailureCause, withoutSqlStatementText, type ExecutionBlocker } from "@paperclipai/shared";
 import { hasRequiredWorkspaceRecovery, LEGACY_WORKSPACE_RECOVERY_SCHEMA, nativeRunHasNoWorkspaceAccess } from "./workspace-restore-recovery-state.js";
 import { unreconciledNativeExportPredicate } from "./native-runtime/native-workspace-reconstruction.js";
 import { hasRecoveredCleanupStopReceipt, hasRemoteTerminationReceipt } from "./remote-execution-termination.js";
@@ -363,7 +363,7 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
       eq(issueComments.companyId, companyId), eq(issueComments.issueId, issueId),
       eq(issueComments.id, options.conversationResetCommentId),
     )).limit(1);
-    if (command?.authorUserId && !command.deletedAt && command.body.trim() === "/new") return null;
+    if (command?.authorUserId && !command.deletedAt && isConversationResetBody(command.body)) return null;
   }
   const [boundary] = conversation?.conversationAgentId && conversation.conversationBoundaryCommentId
     ? await db.select({ createdAt: issueComments.createdAt }).from(issueComments).where(and(

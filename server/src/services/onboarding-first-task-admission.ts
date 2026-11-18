@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agents, documents, heartbeatRuns, issueComments, issueDocuments, issues, issueThreadInteractions, type Db } from "@paperclipai/db";
-import { ONBOARDING_FIRST_TASK_ORIGIN_KIND } from "@paperclipai/shared";
+import { ONBOARDING_FIRST_TASK_ORIGIN_KIND, isConversationResetBody } from "@paperclipai/shared";
 import { badRequest, forbidden } from "../errors.js";
 import { readPersistedConfirmationDecision } from "./confirmation-decision.js";
 
@@ -135,7 +135,7 @@ async function readHumanDecision(tx: Db, input: { companyId: string; issueId: st
     if (!comment || comment.deletedAt || comment.authorType !== "user" || !comment.authorUserId
       || comment.authorAgentId || comment.createdByRunId || comment.derivedAuthorAgentId || comment.derivedCreatedByRunId
       || comment.sourceTrust?.disposition === "quarantined" || comment.createdAt < proposal.createdAt
-      || comment.body.trim() === "/new") return null;
+      || isConversationResetBody(comment.body)) return null;
     const [resolver] = await tx.select(runOriginFields).from(heartbeatRuns).where(and(
       eq(heartbeatRuns.id, proposal.resolvedByRunId), eq(heartbeatRuns.companyId, input.companyId),
       eq(heartbeatRuns.agentId, proposal.resolvedByAgentId),

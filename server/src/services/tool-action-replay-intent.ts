@@ -1,3 +1,5 @@
+import { isConversationResetBody } from "@paperclipai/shared";
+
 /** A fresh human request may ask for another review, never inherit approval.
  * These values come only from persisted run/comment rows, not tool arguments. */
 interface ReplaySession {
@@ -47,7 +49,7 @@ export function isNewHumanIntentAfterToolRejection(input: {
     || comment.authorType !== "user" || comment.authorUserId !== session.responsibleUserId
     || comment.authorAgentId || comment.createdByRunId || comment.derivedAuthorAgentId || comment.derivedCreatedByRunId
     || comment.derivedAuthorSource || comment.deletedAt || comment.sourceTrust != null
-    || comment.presentation?.kind === "system_notice" || !comment.body.trim() || comment.body.trim() === "/new") return false;
+    || comment.presentation?.kind === "system_notice" || !comment.body.trim() || isConversationResetBody(comment.body)) return false;
   // A later request by a different person cannot override this person's decline.
   const deciders = [rejection.decidedByUserId, rejection.resolvedByUserId].filter(value => value != null);
   if (!deciders.length || deciders.some(value => value !== session.responsibleUserId)

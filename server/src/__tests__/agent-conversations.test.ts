@@ -533,6 +533,173 @@ import {
         db, companyId, issueId: task.id, exposeLowTrustRaw: true,
       }))?.body).toBe("QUARANTINED_PLAN_BODY");
     });
+    describe("/rewind", () => {
+      const appFor = (userId: string) => {
+        const app = express();
+        app.use(express.json());
+        app.use((req, _res, next) => {
+          req.actor = { type: "board", source: "session", userId, companyIds: [companyId] };
+          next();
+        });
+        app.use("/api", issueRoutes(db, { wakeup: async () => null } as never));
+        app.use(errorHandler);
+        return app;
+      };
+      async function ownedConversation() {
+        const owner = randomUUID();
+        await db.insert(companyMemberships).values({
+          companyId, principalType: "user", principalId: owner, status: "active", membershipRole: "operator",
+        });
+        await ensureHumanRoleDefaultGrants(db, {
+          companyId, principalId: owner, membershipRole: "operator", grantedByUserId: null,
+        });
+        const issue = await create(owner);
+        return { owner, issue, app: appFor(owner) };
+      }
+      const send = (app: express.Express, issueId: string, body: string, clientRequestId = randomUUID()) =>
+        request(app).post(`/api/issues/${issueId}/comments`).send({ body, clientRequestId });
+      const countComments = async (issueId: string) =>
+        (await db.select().from(issueComments).where(eq(issueComments.issueId, issueId))).length;
+
+      it("resets the session like /new when a user rewinds to an earlier message", async () => {
+        const issue = await create();
+        const target = await issueService(db).addComment(issue.id, "Keep this", { userId: "local-board" });
+        const derailed = await issueService(db).addComment(issue.id, "Side question", { userId: "local-board" });
+        const command = await issueService(db).addComment(issue.id, `/rewind ${target.id}`, { userId: "local-board" });
+        const run = await runFor(issue.id, command.id);
+        expect((await prepareConversationTurn(db, run)).reset).toBe(true);
+        const [current] = await db.select().from(issues).where(eq(issues.id, issue.id));
+        expect(current.conversationSessionGeneration).toBe(1);
+        expect(current.conversationBoundaryCommentId).toBe(command.id);
+        expect(derailed.id).not.toBe(command.id);
+      });
+
+      it("does not reset when an agent authors a /rewind comment", async () => {
+        const issue = await create();
+        const target = await issueService(db).addComment(issue.id, "Keep this", { userId: "local-board" });
+        const [forged] = await db.insert(issueComments).values({
+          companyId, issueId: issue.id, authorAgentId: agentId, authorType: "agent", body: `/rewind ${target.id}`,
+        }).returning();
+        const run = await runFor(issue.id, forged.id);
+        expect((await prepareConversationTurn(db, run)).reset).toBe(false);
+      });
+
+      it("records the rewind target on the session-started activity", async () => {
+        const issue = await create();
+        const target = await issueService(db).addComment(issue.id, "Keep this", { userId: "local-board" });
+        const command = await issueService(db).addComment(issue.id, `/rewind ${target.id}`, { userId: "local-board" });
+        await prepareConversationTurn(db, await runFor(issue.id, command.id));
+        const [event] = await db.select().from(activityLog).where(and(
+          eq(activityLog.entityId, issue.id), eq(activityLog.action, "issue.conversation_session_started"),
+        ));
+        expect(event.details).toMatchObject({ generation: 1, boundaryCommentId: command.id, rewoundToCommentId: target.id });
+      });
+
+      it("records no rewind target for a plain /new", async () => {
+        const issue = await create();
+        const command = await issueService(db).addComment(issue.id, "/new", { userId: "local-board" });
+        await prepareConversationTurn(db, await runFor(issue.id, command.id));
+        const [event] = await db.select().from(activityLog).where(and(
+          eq(activityLog.entityId, issue.id), eq(activityLog.action, "issue.conversation_session_started"),
+        ));
+        expect(event.details).toMatchObject({ rewoundToCommentId: null });
+      });
+
+      it("accepts a rewind to a user message and to the conversation agent's reply", async () => {
+        const { owner, issue, app } = await ownedConversation();
+        const userMessage = await issueService(db).addComment(issue.id, "Question", { userId: owner });
+        const agentReply = await issueService(db).addComment(issue.id, "Answer", {
+          agentId, runId: (await runFor(issue.id, userMessage.id, { conversationSessionGeneration: 0 })).id,
+        });
+        expect((await send(app, issue.id, `/rewind ${agentReply.id}`)).status).toBe(201);
+      });
+
+      it("rejects a target from another conversation without posting anything", async () => {
+        const { app, issue } = await ownedConversation();
+        const other = await create();
+        const foreign = await issueService(db).addComment(other.id, "Elsewhere", { userId: "local-board" });
+        const response = await send(app, issue.id, `/rewind ${foreign.id}`);
+        expect(response.status).toBe(422);
+        expect(await countComments(issue.id)).toBe(0);
+      });
+
+      it("rejects a target that does not exist", async () => {
+        const { app, issue } = await ownedConversation();
+        expect((await send(app, issue.id, `/rewind ${randomUUID()}`)).status).toBe(422);
+        expect(await countComments(issue.id)).toBe(0);
+      });
+
+      it("rejects a deleted target", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const target = await issueService(db).addComment(issue.id, "Gone", { userId: owner });
+        await db.update(issueComments).set({ deletedAt: new Date() }).where(eq(issueComments.id, target.id));
+        expect((await send(app, issue.id, `/rewind ${target.id}`)).status).toBe(422);
+      });
+
+      it("rejects a target that predates the current session boundary", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const old = await issueService(db).addComment(issue.id, "Old session", { userId: owner });
+        const boundary = await issueService(db).addComment(issue.id, "/new", { userId: owner });
+        await prepareConversationTurn(db, await runFor(issue.id, boundary.id));
+        expect((await send(app, issue.id, `/rewind ${old.id}`)).status).toBe(422);
+        expect((await send(app, issue.id, `/rewind ${boundary.id}`)).status).toBe(422);
+      });
+
+      it("rejects a system notice as a target", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const notice = await issueService(db).addComment(issue.id, "Run failed", { userId: owner });
+        await db.update(issueComments).set({ presentation: { kind: "system_notice", tone: "neutral" } as never })
+          .where(eq(issueComments.id, notice.id));
+        expect((await send(app, issue.id, `/rewind ${notice.id}`)).status).toBe(422);
+      });
+
+      it("rejects a comment authored by a different agent as a target", async () => {
+        const { app, issue } = await ownedConversation();
+        const strangerId = randomUUID();
+        await db.insert(agents).values({
+          id: strangerId, companyId, name: "Stranger", role: "engineer", status: "idle", adapterType: "process",
+        });
+        const [stranger] = await db.insert(issueComments).values({
+          companyId, issueId: issue.id, authorAgentId: strangerId, authorType: "agent", body: "Not our agent",
+        }).returning();
+        expect((await send(app, issue.id, `/rewind ${stranger.id}`)).status).toBe(422);
+      });
+
+      it("treats a rewind with trailing text as an ordinary message", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const target = await issueService(db).addComment(issue.id, "Keep", { userId: owner });
+        const response = await send(app, issue.id, `/rewind ${target.id} please`);
+        expect(response.status).toBe(201);
+        await prepareConversationTurn(db, await runFor(issue.id, response.body.id));
+        const [current] = await db.select().from(issues).where(eq(issues.id, issue.id));
+        expect(current.conversationSessionGeneration).toBe(0);
+      });
+
+      it("posts a retried rewind once", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const target = await issueService(db).addComment(issue.id, "Keep", { userId: owner });
+        const clientRequestId = randomUUID();
+        const first = await send(app, issue.id, `/rewind ${target.id}`, clientRequestId);
+        await prepareConversationTurn(db, await runFor(issue.id, first.body.id));
+        const retry = await send(app, issue.id, `/rewind ${target.id}`, clientRequestId);
+        expect(first.status).toBe(201);
+        expect(retry.status).toBe(201);
+        expect(retry.body.id).toBe(first.body.id);
+      });
+
+      it("is accepted while the conversation is paused and releases the hold", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const target = await issueService(db).addComment(issue.id, "Keep", { userId: owner });
+        const [pause] = await db.insert(issueTreeHolds).values({
+          companyId, rootIssueId: issue.id, mode: "pause", status: "active",
+          createdByActorType: "user", createdByUserId: owner,
+          releasePolicy: { strategy: "manual", note: "leaf_pause" },
+        }).returning();
+        expect((await send(app, issue.id, "Continue")).status).toBe(409);
+        expect((await send(app, issue.id, `/rewind ${target.id}`)).status).toBe(201);
+        expect((await db.select().from(issueTreeHolds).where(eq(issueTreeHolds.id, pause.id)))[0].status).toBe("released");
+      });
+    });
     it("keeps concurrent delivery and multiple resets in separate ordered queue entries", async () => {
       const issue = await create();
       const first = await issueService(db).addComment(issue.id, "First", {

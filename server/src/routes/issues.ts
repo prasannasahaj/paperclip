@@ -32,7 +32,7 @@ import { recordCompletedHandoffRead, recordCompletedHandoffReads } from "../serv
 import { recordDeclinedInteractionRead } from "../services/chat-interaction-outcome-report.js";
 import { runRetainsIssueIdentity } from "../services/task-repository-acquisition.js";
 import { withConversationReadState } from "../services/agent-chat-read-state.js";
-import { markIssueReadSchema } from "@paperclipai/shared";
+import { isConversationResetBody, markIssueReadSchema, parseConversationRewind } from "@paperclipai/shared";
 import { enqueueFastResponse } from "../services/fast-responses.js";
 import { hasRequiredWorkspaceRecovery, LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "../services/workspace-restore-recovery-state.js";
 import { hasUnverifiedNativeWorkspaceFinalizationOwner } from "../services/native-runtime/native-workspace-finalization-recovery-state.js";
@@ -62,7 +62,7 @@ import { deferredWakeJoinsFirstTurn, firstTurnTakesAllQueuedComments, runAccepts
 import { reconstructNativeWorkspace, unreconciledNativeExportPredicate } from "../services/native-runtime/native-workspace-reconstruction.js";
 import { reconstructWorkspaceSchema } from "@paperclipai/shared";
 import { hasQueuedInteractionResponse } from "../services/queued-interaction-response.js";
-import { deliverConversationComments, heldConversationComments, isConversation } from "../services/agent-conversations.js";
+import { assertConversationRewindTarget, deliverConversationComments, heldConversationComments, isConversation } from "../services/agent-conversations.js";
 import { assertOnboardingFirstTaskDependenciesAllowed } from "../services/onboarding-first-task-admission.js";
 import { resolveChatTaskAssignment } from "../services/chat-task-assignment.js";
 import { issueRecoveryActionReadModel } from "../services/issue-recovery-actions.js";
@@ -19417,7 +19417,7 @@ export function issueRoutes(
         if (req.actor.userId !== issue.conversationUserId) throw forbidden("Only the conversation owner can send messages or start a new session");
         if (!req.body.clientRequestId) throw unprocessable("Chat messages require a clientRequestId for safe retries");
         if (!(await assertAgentIssueCommentAllowed(req, res, issue))) return;
-        if (req.body.body.trim() !== "/new" && !(await assertBoardCommentNotPaused(req, res, issue))) return;
+        if (!isConversationResetBody(req.body.body) && !(await assertBoardCommentNotPaused(req, res, issue))) return;
         const actor = getActorInfo(req);
         const userId = req.actor.userId;
         const publications: ActivityPublication[] = [];
@@ -19429,6 +19429,7 @@ export function issueRoutes(
             eq(issueComments.issueId, issue.id), eq(issueComments.authorUserId, userId),
             eq(issueComments.clientRequestId, req.body.clientRequestId),
           ));
+          if (!existing) await assertConversationRewindTarget(tx as unknown as Db, issue, req.body.body);
           const saved = await svc.addComment(issue.id, req.body.body, { userId }, {
             clientRequestId: req.body.clientRequestId, authorType: "user", attachmentIds: req.body.attachmentIds,
           }, tx);
