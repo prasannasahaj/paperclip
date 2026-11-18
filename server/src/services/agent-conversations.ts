@@ -69,10 +69,7 @@ export function isConversationReset(body: string): boolean {
 
 export async function assertConversationRewindTarget(
   db: Db,
-  issue: Pick<
-    typeof issues.$inferSelect,
-    "id" | "companyId" | "conversationAgentId" | "conversationUserId" | "conversationBoundaryCommentId"
-  >,
+  issue: Pick<typeof issues.$inferSelect, "id" | "companyId" | "conversationAgentId" | "conversationUserId">,
   body: string,
 ) {
   const rewind = parseConversationRewind(body);
@@ -85,18 +82,24 @@ export async function assertConversationRewindTarget(
       eq(issueComments.issueId, issue.id),
       eq(issueComments.companyId, issue.companyId),
     ));
-  const [boundary] = issue.conversationBoundaryCommentId
-    ? await db
-        .select({ createdAt: issueComments.createdAt })
-        .from(issueComments)
-        .where(eq(issueComments.id, issue.conversationBoundaryCommentId))
-    : [];
+  const [latestReset] = await db
+    .select({ createdAt: issueComments.createdAt })
+    .from(issueComments)
+    .where(and(
+      eq(issueComments.issueId, issue.id),
+      eq(issueComments.companyId, issue.companyId),
+      isNull(issueComments.deletedAt),
+      sql`${issueComments.authorUserId} is not null`,
+      sql`btrim(${issueComments.body}) ~ '^(/new|/rewind [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'`,
+    ))
+    .orderBy(desc(issueComments.createdAt))
+    .limit(1);
   const writtenByOwner = target?.authorType === "user" && target.authorUserId === issue.conversationUserId;
   const writtenByConversationAgent =
     target?.authorAgentId != null && target.authorAgentId === issue.conversationAgentId;
   const isPlainMessage = Boolean(target) && !target!.deletedAt && !target!.presentation
     && !isConversationResetBody(target!.body);
-  const isInCurrentSession = !boundary || (target != null && target.createdAt > boundary.createdAt);
+  const isInCurrentSession = !latestReset || (target != null && target.createdAt > latestReset.createdAt);
   if (!isPlainMessage || !(writtenByOwner || writtenByConversationAgent) || !isInCurrentSession) {
     throw unprocessable("Choose a message from the current session to rewind to");
   }

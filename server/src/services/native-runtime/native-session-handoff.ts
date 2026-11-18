@@ -9,16 +9,25 @@ export const NATIVE_HANDOFF_MAX_BYTES = 24_000;
 const ENTRY_MAX_CHARS = 4_000;
 const LIMIT = 10;
 
-export type RewindHandoff = { targetCommentId: string; previousBoundaryCommentId: string | null; generation: number | null };
+export type RewindHandoff = {
+  targetCommentId: string;
+  previousBoundaryCommentId: string | null;
+  generation: number | null;
+  previousRewindGeneration: number | null;
+};
 
 export function renderRewindDirective(rewind: RewindHandoff): string {
   return [
     "## Rewound conversation",
     "The person rewound this conversation to an earlier message. Everything after that message in the previous session was abandoned on purpose; it is not background and must not shape your answer.",
+    ...(rewind.previousRewindGeneration != null
+      ? [`The previous session was itself a rewind: first read the issue document with key rewind-state-${rewind.previousRewindGeneration}, which holds the state it rebuilt, then continue from the thread after it.`]
+      : []),
     `target comment id: ${rewind.targetCommentId}`,
     `previous session boundary comment id: ${rewind.previousBoundaryCommentId ?? "none (the conversation start)"}`,
     "Before you answer, rebuild the state the conversation had reached at the target message. Read the previous session's comments with get_task_history, starting after the previous session boundary and stopping at the target message (inclusive). Ignore every comment, interaction and document created after the target message, including any that look relevant.",
-    `Then save what was established as an issue document with key rewind-state-${rewind.generation ?? "latest"}: decisions, open items, relevant files and links, dense enough to fit 4000 characters. Say plainly what was only visible in earlier tool output and is lost; do not invent it.`,
+    `If an issue document with key rewind-state-${rewind.generation ?? "latest"} already exists, read it and skip the rebuild.`,
+    `Otherwise save what was established as an issue document with key rewind-state-${rewind.generation ?? "latest"}: decisions, open items, relevant files and links, dense enough to fit 4000 characters. Say plainly what was only visible in earlier tool output and is lost; do not invent it.`,
     "Then respond to the person's latest message using that state.",
   ].join("\n");
 }
@@ -81,12 +90,13 @@ export async function buildNativeSessionHandoff(input: {
     .from(issueComments).where(and(eq(issueComments.id, input.throughCommentId), eq(issueComments.companyId, companyId), eq(issueComments.issueId, issueId))).limit(1) : [];
   if (input.throughCommentId && !cutoff) return null;
   const rewindTarget = boundary ? parseConversationRewind(boundary.body) : null;
-  const [previousBoundary] = rewindTarget && boundary ? await db.select({ id: issueComments.id }).from(issueComments)
+  const [previousBoundary] = rewindTarget && boundary ? await db.select({ id: issueComments.id, body: issueComments.body, generation: issueComments.conversationSessionGeneration }).from(issueComments)
     .where(and(eq(issueComments.companyId, companyId), eq(issueComments.issueId, issueId), isNull(issueComments.deletedAt),
       sql`${issueComments.conversationSessionGeneration} is not null`, sql`${issueComments.createdAt} < ${boundary.createdAt.toISOString()}::timestamptz`))
     .orderBy(desc(issueComments.createdAt), desc(issueComments.id)).limit(1) : [];
   const rewind: RewindHandoff | null = rewindTarget
-    ? { targetCommentId: rewindTarget.targetCommentId, previousBoundaryCommentId: previousBoundary?.id ?? null, generation: issue.generation }
+    ? { targetCommentId: rewindTarget.targetCommentId, previousBoundaryCommentId: previousBoundary?.id ?? null, generation: issue.generation,
+      previousRewindGeneration: previousBoundary && parseConversationRewind(previousBoundary.body) ? previousBoundary.generation : null }
     : null;
   const afterBoundary = (date: typeof issueComments.createdAt | typeof issueThreadInteractions.createdAt | typeof heartbeatRuns.createdAt | typeof issueDocuments.createdAt) =>
     boundary ? sql`${date} > ${boundary.createdAt.toISOString()}::timestamptz` : undefined;

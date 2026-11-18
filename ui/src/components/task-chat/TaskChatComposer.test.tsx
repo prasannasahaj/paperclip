@@ -2055,6 +2055,32 @@ describe("TaskChatComposer", () => {
       expect(picker()).toBeNull();
     });
 
+    it("refuses to open the picker while attachments are staged", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      const onAttachImage = vi.fn().mockResolvedValue({ contentPath: "/attachments/notes.txt", originalFilename: "notes.txt" });
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets, onAttachImage });
+      pasteFiles([new File(["plain"], "notes.txt", { type: "text/plain" })]);
+      await flushAsync();
+      typeText("/rewind");
+      await submitWithShortcut();
+      expect(alertText()).toBe("Remove attachments before using /rewind.");
+      expect(picker()).toBeNull();
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("lets a paused conversation open the picker and post the rewind", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      render(<TaskChatComposer onAdd={onAdd} conversationMode workMode="standard" pause={{ scope: "leaf" }} rewindTargets={rewindTargets} />);
+      typeText("/rewind");
+      expect(sendButton().disabled).toBe(false);
+      await act(async () => sendButton().click());
+      expect(picker()).not.toBeNull();
+      const option = Array.from(picker()!.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.includes("Check the bidder logs"))!;
+      await act(async () => option.click());
+      await flushAsync();
+      expect(onAdd.mock.calls[0][0]).toBe(`/rewind ${OLDER_ID}`);
+    });
+
     it("closes the picker without posting when it is dismissed", async () => {
       const onAdd = vi.fn().mockResolvedValue(undefined);
       renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });

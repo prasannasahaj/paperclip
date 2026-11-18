@@ -665,6 +665,28 @@ import {
         expect((await send(app, issue.id, `/rewind ${stranger.id}`)).status).toBe(422);
       });
 
+      it("rejects a target that predates a /new that has not been processed yet", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const old = await issueService(db).addComment(issue.id, "Before the pending reset", { userId: owner });
+        expect((await send(app, issue.id, "/new")).status).toBe(201);
+        expect((await send(app, issue.id, `/rewind ${old.id}`)).status).toBe(422);
+      });
+
+      it("accepts a target written after a /new that has not been processed yet", async () => {
+        const { app, issue } = await ownedConversation();
+        expect((await send(app, issue.id, "/new")).status).toBe(201);
+        const after = await send(app, issue.id, "After the pending reset");
+        expect((await send(app, issue.id, `/rewind ${after.body.id}`)).status).toBe(201);
+      });
+
+      it("rejects a target that predates an earlier rewind that has not been processed yet", async () => {
+        const { owner, app, issue } = await ownedConversation();
+        const first = await issueService(db).addComment(issue.id, "First keeper", { userId: owner });
+        const second = await issueService(db).addComment(issue.id, "Second keeper", { userId: owner });
+        expect((await send(app, issue.id, `/rewind ${second.id}`)).status).toBe(201);
+        expect((await send(app, issue.id, `/rewind ${first.id}`)).status).toBe(422);
+      });
+
       it("treats a rewind with trailing text as an ordinary message", async () => {
         const { owner, app, issue } = await ownedConversation();
         const target = await issueService(db).addComment(issue.id, "Keep", { userId: owner });
