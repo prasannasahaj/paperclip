@@ -55,14 +55,13 @@ export function useCompactContext(issueId: string | null, assigneeAgentId: strin
   const { mutateAsync } = request;
   const compact = useCallback(async () => {
     if (!issueId) return;
-    try {
-      await mutateAsync();
-    } catch {
-      return;
-    }
+    await mutateAsync();
   }, [issueId, mutateAsync]);
+  const compactFromButton = useCallback(() => {
+    compact().catch(() => undefined);
+  }, [compact]);
   const state = issueId
-    ? contextCompactState(usage.data?.compaction, request.isPending, () => void compact())
+    ? contextCompactState(usage.data?.compaction, request.isPending, compactFromButton)
     : null;
   return { state, compact };
 }

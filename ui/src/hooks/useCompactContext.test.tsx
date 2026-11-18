@@ -104,18 +104,31 @@ describe("useCompactContext", () => {
     expect(latest.state).toEqual({ status: "pending" });
   });
 
-  it("toasts and resolves when the compaction request is rejected", async () => {
+  it("toasts and rejects with the server error when the compaction request is rejected", async () => {
     api.getContextUsage.mockResolvedValue(reading({ status: "available", reasonCode: null, reason: null }));
     api.compactContext.mockRejectedValue(new Error("Task execution is disabled."));
     await render();
+    let caught: unknown;
     await act(async () => {
-      await latest.compact();
+      caught = await latest.compact().catch((error: unknown) => error);
     });
+    expect(caught).toEqual(new Error("Task execution is disabled."));
     expect(toast.pushToast).toHaveBeenCalledWith({
       title: "Could not compact the context",
       body: "Task execution is disabled.",
       tone: "error",
     });
+  });
+
+  it("lets the Compact now button fire without an unhandled rejection when the request fails", async () => {
+    api.getContextUsage.mockResolvedValue(reading({ status: "available", reasonCode: null, reason: null }));
+    api.compactContext.mockRejectedValue(new Error("Task execution is disabled."));
+    await render();
+    await act(async () => {
+      if (latest.state?.status === "available") latest.state.onCompact();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(toast.pushToast).toHaveBeenCalledTimes(1);
   });
 
   it("does nothing without an issue", async () => {
