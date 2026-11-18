@@ -58,6 +58,8 @@ import {
   AttachmentTitle,
 } from "@/components/ui/attachment";
 import { fileKindForName, formatFileSize, isImageAttachment } from "./task-chat-attachments";
+import { parseCompactCommand, type ParsedCompactCommand } from "./compact-command";
+import type { ContextCompactState } from "../ContextUsageMeter";
 import {
   MarkdownEditor,
   type MarkdownEditorRef,
@@ -187,6 +189,8 @@ interface TaskChatComposerProps {
   onRunnerGoalReassign?: (
     reassignment: CommentReassignment,
   ) => Promise<void> | void;
+  compactState?: ContextCompactState | null;
+  onCompactContext?: () => Promise<void> | void;
 }
 
 export type RunnerGoalComposerCommand =
@@ -426,6 +430,8 @@ export function TaskChatComposer({
   runnerGoalCapability = null,
   onRunnerGoalCommand,
   onRunnerGoalReassign,
+  compactState = null,
+  onCompactContext,
 }: TaskChatComposerProps) {
   const streamlined = useStreamlinedTaskChatPresentation();
   const submitKey = useComposerSubmitKey();
@@ -858,6 +864,55 @@ export function TaskChatComposer({
     evt.target.value = "";
   }
 
+  const compactCommandOption: ActionCommandOption = {
+    id: "action:compact",
+    kind: "action",
+    command: "compact",
+    name: "Compact",
+    description: "Summarise this session's context to free space.",
+    aliases: ["compact", "summarize"],
+    disabled: compactState?.status === "unavailable",
+    disabledReason: compactState?.status === "unavailable" ? compactState.reason : null,
+  };
+
+  function clearComposerAfterCommand() {
+    bodyRef.current = "";
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = null;
+    if (draftKey) clearDraft(draftKey);
+    setBody("");
+    editorRef.current?.clear();
+  }
+
+  async function runCompactCommand(command: Extract<ParsedCompactCommand, { matched: true }>) {
+    if ("error" in command) {
+      setActionError(command.error);
+      return;
+    }
+    if (attachmentsRef.current.length > 0) {
+      setActionError("Remove attachments before using /compact.");
+      return;
+    }
+    if (!compactState) {
+      setActionError("Context compaction is unavailable until the agent has reported its context.");
+      return;
+    }
+    if (compactState.status === "unavailable") {
+      setActionError(compactState.reason);
+      return;
+    }
+    if (compactState.status === "pending") return;
+    try {
+      await onCompactContext?.();
+      setActionError(null);
+      clearComposerAfterCommand();
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "The context could not be compacted.",
+      );
+    }
+  }
+
   function prepareGoal() {
     const current = bodyRef.current.trim();
     changeBody(/^\/goal(?:\s|$)/.test(current) ? current : `/goal ${current}`);
@@ -941,6 +996,14 @@ export function TaskChatComposer({
     const submittedAssignee = pendingAssigneeRef.current;
     const submittedModeGeneration = modeChoiceGeneration.current;
     const trimmed = submittedBody.trim();
+    const compactCommand =
+      queuedEdit || !onCompactContext
+        ? ({ matched: false } as const)
+        : parseCompactCommand(submittedBody);
+    if (compactCommand.matched) {
+      await runCompactCommand(compactCommand);
+      return;
+    }
     const goalCommand = queuedEdit
       ? ({ matched: false } as const)
       : parseRunnerGoalCommand(submittedBody);
@@ -988,12 +1051,7 @@ export function TaskChatComposer({
         }
         await onRunnerGoalCommand(goalCommand.command);
         setActionError(null);
-        bodyRef.current = "";
-        if (draftTimer.current) clearTimeout(draftTimer.current);
-        draftTimer.current = null;
-        if (draftKey) clearDraft(draftKey);
-        setBody("");
-        editorRef.current?.clear();
+        clearComposerAfterCommand();
       } catch (error) {
         setActionError(
           error instanceof Error
@@ -1437,11 +1495,11 @@ export function TaskChatComposer({
               }
               readOnly={disabled || !!uncertainSubmission || Boolean(creation && (submitting || creation.readOnly))}
               mentions={mentions}
-              actionCommands={creation ? [] : conversationMode ? [{
+              actionCommands={creation ? [] : conversationMode ? [compactCommandOption, {
                 id: "action:new", kind: "action", command: "new", name: "New session",
                 description: "Start fresh context here, preserving conversation history.", aliases: ["new"],
                 disabled,
-              }] : [goalCommandOption]}
+              }] : [goalCommandOption, compactCommandOption]}
               onSubmit={() => void submit()}
               submitKey={submitKey}
               fileDropTarget="parent"
