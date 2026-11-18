@@ -120,6 +120,71 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(await buildNativeSessionHandoff({ db, companyId: randomUUID(), issueId, agentId, before: new Date(20_000) })).toBeNull();
     expect(await buildNativeSessionHandoff({ db, companyId, issueId, agentId: randomUUID(), before: new Date(20_000) })).toBeNull();
   });
+  describe("after /rewind", () => {
+    async function conversationWith(boundaryBody: (targetId: string) => string, options: { previousBoundary: boolean }) {
+      const rewindIssueId = randomUUID(), previousBoundaryId = randomUUID(), targetId = randomUUID(), derailedId = randomUUID(), boundaryCommentId = randomUUID();
+      await db.insert(issues).values({ id: rewindIssueId, companyId, title: "Rewound chat", status: "in_progress", assigneeAgentId: agentId,
+        conversationAgentId: agentId, conversationUserId: rewindIssueId, conversationState: "active", conversationSessionGeneration: 2 });
+      await db.insert(issueComments).values([
+        ...(options.previousBoundary ? [{ id: previousBoundaryId, companyId, issueId: rewindIssueId, body: "/new", authorUserId: "user", conversationSessionGeneration: 1, createdAt: new Date(100) }] : []),
+        { id: targetId, companyId, issueId: rewindIssueId, body: "Keep this analysis", authorUserId: "user", createdAt: new Date(1_000) },
+        { id: derailedId, companyId, issueId: rewindIssueId, body: "DERAILED SIDE QUESTION", authorUserId: "user", createdAt: new Date(2_000) },
+        { id: boundaryCommentId, companyId, issueId: rewindIssueId, body: boundaryBody(targetId), authorUserId: "user", conversationSessionGeneration: 2, createdAt: new Date(3_000) },
+        { companyId, issueId: rewindIssueId, body: "Continue from here", authorUserId: "user", createdAt: new Date(4_000) },
+      ]);
+      const { eq } = await import("drizzle-orm");
+      await db.update(issues).set({ conversationBoundaryCommentId: boundaryCommentId }).where(eq(issues.id, rewindIssueId));
+      return { rewindIssueId, previousBoundaryId, targetId };
+    }
+    const handoffFor = (rewindIssueId: string) =>
+      buildNativeSessionHandoff({ db, companyId, issueId: rewindIssueId, agentId, before: new Date(20_000) });
+
+    it("includes the rewind block when the boundary is a /rewind", async () => {
+      const { rewindIssueId } = await conversationWith((targetId) => `/rewind ${targetId}`, { previousBoundary: true });
+      expect(await handoffFor(rewindIssueId)).toContain("## Rewound conversation");
+    });
+
+    it("names the target message and the previous session boundary", async () => {
+      const { rewindIssueId, targetId, previousBoundaryId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      const result = await handoffFor(rewindIssueId);
+      expect(result).toContain(`target comment id: ${targetId}`);
+      expect(result).toContain(`previous session boundary comment id: ${previousBoundaryId}`);
+    });
+
+    it("says the conversation start is the origin when there was no earlier /new", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: false });
+      expect(await handoffFor(rewindIssueId)).toContain("previous session boundary comment id: none (the conversation start)");
+    });
+
+    it("tells the agent to ignore later comments and use only documents created before the target", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      const result = await handoffFor(rewindIssueId);
+      expect(result).toContain("Ignore every comment, interaction and document created after the target message");
+      expect(result).toContain("get_task_history");
+    });
+
+    it("tells the agent to save the rebuilt state as rewind-state-<generation>", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      expect(await handoffFor(rewindIssueId)).toContain("rewind-state-2");
+    });
+
+    it("still carries the user's message after the rewind and never the derailed one", async () => {
+      const { rewindIssueId } = await conversationWith((id) => `/rewind ${id}`, { previousBoundary: true });
+      const result = await handoffFor(rewindIssueId);
+      expect(result).toContain("Continue from here");
+      expect(result).not.toContain("DERAILED SIDE QUESTION");
+    });
+
+    it("omits the block when the boundary is /new", async () => {
+      const { rewindIssueId } = await conversationWith(() => "/new", { previousBoundary: true });
+      expect(await handoffFor(rewindIssueId)).not.toContain("Rewound conversation");
+    });
+
+    it("omits the block when the conversation has no boundary", async () => {
+      expect(await handoffFor(issueId)).not.toContain("Rewound conversation");
+    });
+  });
+
   it("honors the exact wake-comment cutoff when building a fresh replay", async () => {
     const result = await buildNativeSessionHandoff({ db, companyId, issueId, agentId, before: new Date(20_000), throughCommentId: requestId });
     expect(result).toContain("Build a GitHub PR review bot");
