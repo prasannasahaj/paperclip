@@ -1,4 +1,4 @@
-# Chat session commands: /compact, /handover, /fork
+# Chat session commands: /compact, /fork
 
 Status: draft for approval. Scope: Project 1 of 2. Project 2 (`!` shell) is separate and not designed here.
 
@@ -9,7 +9,6 @@ Prasanna uses Paperclip's own chat (ACPX engine, not `claude-local`) and wants t
 ## Goals
 
 - `/compact` in a conversation or task chat asks the harness to compact the current session's context, using the existing "Compact now" mechanism.
-- `/handover [instruction]` creates a new task whose brief is a self-contained summary of the conversation, linked back to it.
 - `/fork [instruction]` does the same, but the original conversation is explicitly continuing and the new task records the fork source.
 
 ## Non-goals and anti-goals
@@ -30,7 +29,7 @@ Prasanna uses Paperclip's own chat (ACPX engine, not `claude-local`) and wants t
 
 ## Approaches considered
 
-1. **Hybrid (recommended).** `/compact` is a composer action over the existing compaction endpoint. `/handover` and `/fork` are company skills: editable prompt text that uses the existing `create_task` path, zero server code.
+1. **Hybrid (recommended).** `/compact` is a composer action over the existing compaction endpoint. `/fork` is a company skill: editable prompt text that uses the existing `create_task` path, zero server code.
 2. All three native, with `/compact` as new server code that writes a session boundary. More control over linking and UI, but three server code paths and a hard-coded summary prompt for what is a prose instruction. Rejected: it duplicates `create_task` and makes the prompt un-editable.
 3. All three skills, with `/compact` also a skill. Rejected: a skill cannot compact the harness session, so the old context would still be resent.
 
@@ -41,11 +40,9 @@ Prasanna approved the hybrid shape in conversation ("I like your proposal"). Det
 ### /compact
 A composer action next to `/new` and `/goal`. It calls the existing compaction endpoint through `useCompactContext` (`ui/src/hooks/useCompactContext.ts`), shared with the Properties row. It works in conversations and task chat. It compacts inside the same session, so there is no new session boundary and no focus text. When compaction is unavailable (agent busy, unsupported harness, no assignee), the command shows the server's reason and keeps the draft.
 
-### /handover and /fork
-Two company skills, created in the user's instance (not shipped in the repo catalog for now).
-- `/handover`: summarise the conversation into a task brief (outcome, context, acceptance criteria, source links), `create_task` assigned to the conversation agent unless the instruction names another owner, with `initialPlan` and an idempotency key; reply with the task link. Conversation unchanged.
-- `/fork`: same, and the brief states it is a fork of this conversation and that the source continues. The conversation is left running and not blocked by the new task.
-- Both inherit the existing rules: top-level task unless nesting is asked for, one nesting level at most, do not claim the task exists before it is created and verified.
+### /fork
+A company skill, created in the user's instance (not shipped in the repo catalog for now). It summarises the conversation into a self-contained task brief (outcome, context, acceptance criteria, source links), creates the task with `create_task` and `initialPlan`, and states in the brief that it is a fork of this conversation and that the source continues. The conversation is left running and not blocked by the new task. A separate `/handover` was dropped as redundant: a handover and a fork produce the same task.
+- It inherits the existing rules: top-level task unless nesting is asked for, one nesting level at most, do not claim the task exists before it is created and verified.
 
 ## Constraints
 
@@ -56,7 +53,7 @@ Two company skills, created in the user's instance (not shipped in the repo cata
 ## Decisions I made, for you to check
 
 - Surface: conversations and task chat, because the native endpoint serves both.
-- Handover and fork live as skills in your instance (company Atlas), not in the repo. Their sources are in `claude-workspace/outputs/paperclip-session-skills/`.
+- Fork lives as a skill in your instance (company Atlas), not in the repo. Its source is in `claude-workspace/outputs/paperclip-session-skills/fork/`.
 - No focus text for `/compact`: the endpoint takes none.
 - With no context reading yet, `/compact` says compaction is unavailable until the agent has reported its context.
 
