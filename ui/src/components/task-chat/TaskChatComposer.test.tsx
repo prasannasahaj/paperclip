@@ -2002,6 +2002,102 @@ describe("TaskChatComposer", () => {
     expect(editable().textContent).toBe(`[/deploy](${SLASH_HREF}) `);
   });
 
+  describe("/rewind action command", () => {
+    const TARGET_ID = "3f2c1a6e-8b7d-4c1e-9a55-0d6f2b7e1a10";
+    const OLDER_ID = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const rewindTargets = [
+      { id: TARGET_ID, authorLabel: "Agent" as const, excerpt: "Here is the analysis" },
+      { id: OLDER_ID, authorLabel: "You" as const, excerpt: "Check the bidder logs" },
+    ];
+
+    const picker = () => container.querySelector('[data-testid="task-chat-rewind-picker"]');
+    const alertText = () => container.querySelector('[role="alert"]')?.textContent ?? null;
+    async function submitWithShortcut() {
+      pressKey("Enter", { metaKey: true });
+      await flushAsync();
+    }
+
+    it("offers /rewind in the slash menu for a conversation", async () => {
+      renderComposer({ onAdd: vi.fn(), workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rew");
+      await placeCaretAtEnd();
+      expect(autocompleteOption("/rewind")).toBeTruthy();
+    });
+
+    it("does not offer /rewind outside a conversation", async () => {
+      renderComposer({ onAdd: vi.fn(), workMode: "standard", conversationMode: false, rewindTargets });
+      typeText("/rew");
+      await placeCaretAtEnd();
+      const menu = document.body.querySelector('[data-testid="mention-autocomplete-menu"]');
+      expect(menu?.textContent ?? "").not.toContain("/rewind");
+    });
+
+    it("lists the recent messages instead of posting when /rewind is sent bare", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rewind");
+      await submitWithShortcut();
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(picker()?.textContent).toContain("Here is the analysis");
+      expect(picker()?.textContent).toContain("Check the bidder logs");
+    });
+
+    it("posts /rewind <id> through onAdd when a message is chosen", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rewind");
+      await submitWithShortcut();
+      const option = Array.from(picker()!.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.includes("Check the bidder logs"))!;
+      await act(async () => option.click());
+      await flushAsync();
+      expect(onAdd).toHaveBeenCalledTimes(1);
+      expect(onAdd.mock.calls[0][0]).toBe(`/rewind ${OLDER_ID}`);
+      expect(picker()).toBeNull();
+    });
+
+    it("closes the picker without posting when it is dismissed", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rewind");
+      await submitWithShortcut();
+      const cancel = picker()!.querySelector<HTMLButtonElement>('button[aria-label="Cancel rewind"]')!;
+      await act(async () => cancel.click());
+      expect(picker()).toBeNull();
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("explains there is nothing to rewind to and keeps the draft", async () => {
+      const onAdd = vi.fn();
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets: [] });
+      typeText("/rewind");
+      await submitWithShortcut();
+      expect(alertText()).toBe("There is no earlier message in this session to rewind to.");
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("/rewind");
+    });
+
+    it("keeps the rewind draft when the server rejects the target", async () => {
+      const onAdd = vi.fn().mockRejectedValue(new Error("Choose a message from the current session to rewind to"));
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rewind");
+      await submitWithShortcut();
+      const option = picker()!.querySelector<HTMLButtonElement>("li button")!;
+      await act(async () => option.click());
+      await flushAsync();
+      expect(onAdd).toHaveBeenCalledTimes(1);
+      expect(editable().textContent).toContain("/rewind ");
+    });
+
+    it("sends /rewind with trailing words as an ordinary message", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAdd, workMode: "standard", conversationMode: true, rewindTargets });
+      typeText("/rewind to the start");
+      await submitWithShortcut();
+      expect(picker()).toBeNull();
+      expect(onAdd).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("/compact action command", () => {
     const availableCompaction = { status: "available" as const, onCompact: vi.fn() };
 

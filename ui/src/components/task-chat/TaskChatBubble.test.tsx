@@ -9,6 +9,8 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { IssueGalleryContext } from "@/context/IssueGalleryContext";
 import { MemoryRouter, useLocation } from "@/lib/router";
 import { TaskChatAgentIdentity, TaskChatBubble } from "./TaskChatBubble";
+import { TaskChatBubbleActions } from "./TaskChatBubbleActions";
+import { TaskChatRewindContext } from "./rewind-context";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { paperclipHumanAvatarUrl } from "@/lib/issue-chat-human-author";
 import type { TaskChatMessageItem } from "./task-chat-model";
@@ -141,6 +143,44 @@ describe("TaskChatBubble attachment chips", () => {
     const message = container.querySelector('[data-conversation-message]')!;
     expect(message.getAttribute("data-rewound")).toBeNull();
     expect(container.querySelector('[data-testid="task-chat-rewound-label"]')).toBeNull();
+  });
+
+  describe("Rewind to here", () => {
+    const rewind = (canRewind: boolean) => ({ canRewind: () => canRewind, rewindTo: vi.fn() });
+    const ownMessage = (api: ReturnType<typeof rewind> | null) => flushSync(() => root!.render(
+      <ThemeProvider>
+        <TaskChatRewindContext.Provider value={api}>
+          <TaskChatBubble item={{ id: "own-1", kind: "message", author: "human", isCurrentUser: true, text: "My question" }} />
+        </TaskChatRewindContext.Provider>
+      </ThemeProvider>,
+    ));
+    const rewindButton = () => container.querySelector<HTMLButtonElement>('button[aria-label="Rewind to here"]');
+
+    it("shows on your own message when the conversation can rewind to it, and rewinds to that message", async () => {
+      const api = rewind(true);
+      ownMessage(api);
+      await act(async () => rewindButton()!.click());
+      expect(api.rewindTo).toHaveBeenCalledWith("own-1");
+    });
+
+    it("is absent when the message is not a rewind target", () => {
+      ownMessage(rewind(false));
+      expect(rewindButton()).toBeNull();
+    });
+
+    it("is absent outside a conversation", () => {
+      ownMessage(null);
+      expect(rewindButton()).toBeNull();
+    });
+
+    it("is offered by the bubble action cluster only when a handler is given", async () => {
+      const onRewindTo = vi.fn();
+      flushSync(() => root!.render(<ThemeProvider><TaskChatBubbleActions copyText="x" onRewindTo={onRewindTo} /></ThemeProvider>));
+      await act(async () => rewindButton()!.click());
+      expect(onRewindTo).toHaveBeenCalledTimes(1);
+      flushSync(() => root!.render(<ThemeProvider><TaskChatBubbleActions copyText="x" /></ThemeProvider>));
+      expect(rewindButton()).toBeNull();
+    });
   });
 
   it("uses initials instead of loading an external human avatar", () => {

@@ -133,6 +133,10 @@ import { QUEUED_MESSAGE_AUTO_STEER_DELAY_MS } from "@/components/task-chat/queue
 import { useSidebar } from "@/context/SidebarContext";
 import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
 import { useCompactContext } from "@/hooks/useCompactContext";
+import { buildConversationRewindBody } from "@paperclipai/shared";
+import { TaskChatRewindContext, type TaskChatRewindApi } from "@/components/task-chat/rewind-context";
+import { rewindTargetsFrom } from "@/components/task-chat/rewind-targets";
+import { useOptionalToastActions } from "@/context/ToastContext";
 import { useDismissedTaskQuestions } from "@/hooks/useDismissedTaskQuestions";
 import { cn } from "@/lib/utils";
 import { ANALYTICS_MASK_CLASS } from "@/lib/analytics/privacy";
@@ -2960,6 +2964,27 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     },
     [beginSubmission, rejectSubmission, onAdd, pendingComposerInputs, selectedPendingInput, dismissInput, agentMap, takeoverMode],
   );
+  const toast = useOptionalToastActions();
+  const rewindTargets = useMemo(
+    () => (conversationMode ? rewindTargetsFrom(comments) : []),
+    [comments, conversationMode],
+  );
+  const rewindApi = useMemo<TaskChatRewindApi | null>(() => {
+    if (!conversationMode) return null;
+    const targetIds = new Set(rewindTargets.map((target) => target.id));
+    return {
+      canRewind: (commentId) => targetIds.has(commentId),
+      rewindTo: (commentId) => {
+        handleThreadAdd(buildConversationRewindBody(commentId), false).catch((error: unknown) => {
+          toast?.pushToast({
+            title: "Could not rewind",
+            body: error instanceof Error ? error.message : "Try again in a moment.",
+            tone: "error",
+          });
+        });
+      },
+    };
+  }, [conversationMode, rewindTargets, handleThreadAdd, toast]);
   // A message an MCP Apps view proposed, sent only after the viewer clicked
   // Send, through the same path as a typed message.
   const sendMcpAppMessage = useCallback(
@@ -2999,6 +3024,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
       return (
         <TaskChatBubbleActions
           copyText={item.text}
+          onRewindTo={rewindApi?.canRewind(item.id) ? () => rewindApi.rewindTo(item.id) : undefined}
           fastResponse={item.origin === "fast_response"}
           feedback={
             onVote
@@ -3018,6 +3044,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
       feedbackVoteByTargetId,
       feedbackDataSharingPreference,
       feedbackTermsUrl,
+      rewindApi,
     ],
   );
 
@@ -3402,6 +3429,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     <McpAppIssueProvider issueId={issueId} sendMessage={composerDisabledReason ? null : sendMcpAppMessage}>
     <ProviderToolIconsProvider companyId={companyId}>
     <ToolCallProgressProvider issueId={issueId}>
+    <TaskChatRewindContext.Provider value={rewindApi}>
     <TaskChatExpansionState.Provider value={expansionState.current}>
       <TaskChatScrollReady.Provider value={(historyRevealed || !historyPending || historyWaitExpired) && !scrollTargetPending}>
         <TaskChatPresentationProvider
@@ -3739,6 +3767,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                           runnerGoalCapability={runnerGoal.data?.capability ?? null}
                           onRunnerGoalCommand={runnerGoal.executeComposerCommand}
                           compactState={compactContext.state}
+                          rewindTargets={rewindTargets}
                           onCompactContext={compactContext.compact}
                           onRunnerGoalReassign={reassignForRunnerGoal}
                           pendingTakeover={
@@ -3762,6 +3791,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
         </TaskChatPresentationProvider>
       </TaskChatScrollReady.Provider>
     </TaskChatExpansionState.Provider>
+    </TaskChatRewindContext.Provider>
     </ToolCallProgressProvider>
     </ProviderToolIconsProvider>
     </McpAppIssueProvider>
