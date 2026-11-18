@@ -1,6 +1,6 @@
 # /rewind: drop a derailed stretch from a conversation's context
 
-Status: draft for approval. Project 2 of 3 (Project 1: /compact, /handover, /fork, done. Project 3: `!` shell, not designed).
+Status: implemented. Project 2 of 3 (Project 1: /compact and the /fork skill, done. Project 3: `!` shell, not designed).
 
 ## Intent and why
 
@@ -9,7 +9,7 @@ Prasanna drives long analysis and debugging conversations with Claude agents (al
 ## Goals
 
 - `/rewind` lets the user pick an earlier message in the current session. Everything after it up to the rewind stays visible but is greyed as rewound, and is excluded from the agent's context from then on.
-- The agent continues from a state note that preserves what the conversation had established up to the chosen message.
+- The agent continues from a state it rebuilds from the thread up to the chosen message, saved as a note document.
 - The same action is available as "Rewind to here" on a message.
 
 ## Non-goals and anti-goals
@@ -44,11 +44,11 @@ Prasanna asked for conversation-only rewind and did not object to approach 2 aft
 
 ### Server
 1. `isConversationRewind(body): { targetCommentId: string } | null` beside `isConversationReset`. Generalise the `/new` reset branch so both commands share boundary write, generation bump, session deletion, interaction expiry and the `issue.conversation_session_started` activity. The activity details gain `rewoundToCommentId`.
-2. The run for a rewind comment carries `conversationRewind: { targetCommentId, boundaryCommentId }` in its context. The fresh session's prompt gets a one-time directive: read this conversation with the comments API from the start of the previous session up to and including the target message, and the saved documents; ignore every comment after the target up to the rewind; write a state note covering what was established, decisions, open items, relevant files and links; then post a one-line acknowledgement naming the message it returned to. The note is saved as an issue document under a new key per rewind (`rewind-state-<generation>`), so a second rewind never reuses a stale document, and it is written to fit the replay's 4 000-character document excerpt (`native-session-handoff.ts:122-127`).
+2. The rewind is an instant reset with no agent turn, exactly like `/new` (`heartbeat.ts` finishes a reset run immediately). The rebuild happens on the next message: when the session boundary is a `/rewind` comment, the fresh-session handoff (`buildNativeSessionHandoff`) leads with a "Rewound conversation" block naming the target comment id and the previous session boundary. It tells the agent to read the previous session up to and including the target with `get_task_history`, ignore every comment, interaction and document created after the target, save the rebuilt state as an issue document under `rewind-state-<generation>` (dense enough for the replay's 4 000-character document excerpt), then answer the latest message.
 3. `/rewind` is allowed while the conversation is paused only if `/new` is, matching its pause exemption (`routes/issues.ts:20036`).
 
 ### UI
-- Comments between the target and the rewind comment render greyed with a "Rewound" label; the rewind comment renders as a boundary marker saying which message it returned to. The range is derived from the rewind comment's body plus comment order, so nothing is stored beyond the comment.
+- Comments between the target and the rewind comment render greyed with a "Rewound" label; the rewind comment renders as a "Rewound" boundary marker quoting the message it returned to. The range is derived from the rewind comment's body plus comment order, so nothing is stored beyond the comment.
 - Rewound comments stay in exports and search; they are excluded from agent context only.
 
 ## Constraints
@@ -76,11 +76,11 @@ Prasanna asked for conversation-only rewind and did not object to approach 2 aft
 
 The fresh-reader check raised six questions. None needed you; these are my calls:
 
-1. **What the rewind run does.** It is a short turn: write the note, post a one-line acknowledgement ("Rewound to <message>. State saved."), stop. It does not wait for a next message. The note therefore exists before your next message arrives.
+1. **What the rewind run does.** Nothing: it is an instant reset like `/new`, and the thread marker is the acknowledgement. This replaces the earlier plan of a short note-writing turn, which would have rewired the run lifecycle that every reset path assumes has no agent turn. The cost is that the rebuild happens at the start of your next turn, so that first reply is slower and the note exists only after it.
 2. **Note durability.** The live session keeps the full note by resuming. For a recovery from a lost session, the replay only excerpts documents to about 4 000 characters, so the note is instructed to be dense and fit that excerpt, with a new document key per rewind. The 24 KB handoff cap is the reason approach 1 was weak for a whole session; here the cap applies only to the rare fresh-session recovery.
-3. **Artefacts from the derailed stretch.** The directive tells the agent to use only documents and interactions created before the target message and to ignore later ones. The replay already excludes them because they predate the new boundary.
+3. **Artefacts from the derailed stretch.** The directive tells the agent to use only documents and interactions created before the target message and to ignore later ones. The replay excludes the derailed comments because they predate the new boundary, but documents saved during the derailed stretch are only excluded by the directive, which is an instruction rather than a filter.
 4. **Picker scope.** User messages and agent replies are valid targets, so you can return to just after an answer as well as just before a question. Validation is as written under Command and picker.
-5. **Failure.** The boundary is written before the note run starts, as `/new` does. If the note run fails, the conversation is simply a fresh session with the standard handoff, plus Paperclip's normal failed-run notice and retry. This is the same exposure `/new` has. The directive bounds the work by limiting the agent to the thread before the target.
+5. **Failure.** The boundary is written when the rewind comment is processed, as `/new` does. If the next turn fails, Paperclip's normal failed-run notice and retry apply, and the retry carries the same handoff block. The directive bounds the work by limiting the agent to the thread before the target.
 6. **Pause.** `/rewind` mirrors `/new` exactly, including releasing pause holds through the shared reset path (`resumeConversationForReset`, `routes/issues.ts:20036`).
 
 Limit worth knowing: the note is only as good as the written thread. Output the agent only saw in tool results is not in it.

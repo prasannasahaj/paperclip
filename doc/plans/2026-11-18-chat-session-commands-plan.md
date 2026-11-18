@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `/compact` to the Paperclip chat composer, and ship `/handover` and `/fork` as company skills that turn a conversation into a new task.
+**Goal:** Add `/compact` to the Paperclip chat composer, and ship `/fork` as a company skill that turns a conversation into a new task. (`/handover` was drafted in Task 3 and later dropped as redundant with `/fork`.)
 
 **Architecture:** Paperclip already compacts context natively: `POST /issues/:id/context/compact` queues a short run that asks the harness to compact (Codex app-server, or Claude's ACP `/compact`), and the Properties panel exposes it as "Compact now". `/compact` becomes a composer action that calls that same endpoint, so no server work is needed. `/handover` and `/fork` are SKILL.md prompts in the company skills store, which the composer's `/` menu already lists.
 
