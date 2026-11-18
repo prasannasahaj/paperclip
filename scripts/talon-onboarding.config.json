@@ -24,6 +24,14 @@
       "mcpSessionRequired": true,
       "agents": ["QA Verifier"],
       "allowedRisks": ["read"]
+    },
+    {
+      "name": "talon-mcp-gw-uk-prod",
+      "url": "https://mcp.plato.talonoutdoor.com/mcp",
+      "oauthClientId": "7s8vu53g79ma7cfo2iiqjknra5",
+      "mcpSessionRequired": true,
+      "agents": ["QA Verifier"],
+      "allowedRisks": ["read"]
     }
   ]
 }
