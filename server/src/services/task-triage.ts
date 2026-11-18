@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { heartbeatRuns, issues, type Db } from "@paperclipai/db";
 import {
   TASK_TRIAGE_PACK_INSTRUCTIONS, TASK_TRIAGE_QUESTIONS, TASK_TRIAGE_SIZES,
-  type DecisionAnswer, type DecisionRequest, type TaskTriageAgentAnswers, type TaskTriageAgreement,
+  type DecisionAnswer, type DecisionRequest, type DecisionResult, type TaskTriageAgentAnswers, type TaskTriageAgreement,
   type TaskTriageRequest, type TaskTriageResult, type TaskTriageVerdicts,
 } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
@@ -42,6 +42,11 @@ export function triageVerdicts(answers: Record<string, DecisionAnswer>): TaskTri
   return Object.fromEntries(Object.entries(answers).map(([question, answer]) => [question, d3Verdict(answer)]));
 }
 
+export function triageNotRunNotice(result: Exclude<DecisionResult, { status: "succeeded" }>): string {
+  const cause = result.status === "failed" ? `the D3 call failed (${result.errorCode})` : `D3 is unavailable (${result.reason})`;
+  return `D3 triage did not run: ${cause}. Continue on your own judgement and say in your task comment that triage was skipped for this reason.`;
+}
+
 export function triageAgreement(verdicts: TaskTriageVerdicts, agentAnswers: TaskTriageAgentAnswers = {}): TaskTriageAgreement {
   return Object.fromEntries(Object.entries(agentAnswers).flatMap(([question, agentAnswer]) =>
     question in verdicts ? [[question, verdicts[question] === agentAnswer]] : []));
@@ -67,7 +72,14 @@ export function taskTriageService(db: Db, decisions: ReturnType<typeof decisionM
     await assertAgentHasActiveRun(db, caller.companyId, caller.actor);
     const result = await decisions.decide({ companyId: caller.companyId, actor: caller.actor, feature: taskTriageFeature, issueId: input.issueId },
       taskTriageDecisionRequest(input));
-    if (result.status !== "succeeded") return result;
+    if (result.status !== "succeeded") {
+      const notice = triageNotRunNotice(result);
+      await logActivity(db, { companyId: caller.companyId, ...caller.activityActor, action: "decision_model.triage_not_run",
+        ...(await shadowLogEntity(db, caller.companyId, input.issueId)),
+        details: { status: result.status, invocationId: result.invocationId,
+          ...(result.status === "failed" ? { errorCode: result.errorCode } : { reason: result.reason }), notice } });
+      return { ...result, notice };
+    }
     const verdicts = triageVerdicts(result.answers);
     const agreement = triageAgreement(verdicts, input.agentAnswers);
     await logActivity(db, { companyId: caller.companyId, ...caller.activityActor, action: "decision_model.triage_shadow",

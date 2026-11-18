@@ -839,7 +839,7 @@ When the company has a decision model, call `POST /api/companies/:companyId/deci
   "agentAnswers": { "work_type": "implementation", "single_repo": true, "fits_one_small_mr": true, "touches_gated_area": false, "size": "small" } }
 ```
 
-`work_type` is one of `support_investigation`, `data_analysis`, `product_discovery`, `story_grooming`, `implementation`, `testing`, `deployment`, `stakeholder_communication`. Triage every kind of task, not only code; for work with no code change answer `single_repo` and `fits_one_small_mr` as true. Add `packChoices` (2–20 names with descriptions) and `agentAnswers.pack` to ask which pack fits. D3's `verdicts` (named `size` bucket included) and `agreement` are advice only; `answers` holds the raw probabilities and scores. They gate nothing, and you stay responsible for the call. If the result is `unavailable` or `failed`, continue on your own judgement.
+`work_type` is one of `support_investigation`, `data_analysis`, `product_discovery`, `story_grooming`, `implementation`, `testing`, `deployment`, `stakeholder_communication`. Triage every kind of task, not only code; for work with no code change answer `single_repo` and `fits_one_small_mr` as true. Add `packChoices` (2–20 names with descriptions) and `agentAnswers.pack` to ask which pack fits. D3's `verdicts` (named `size` bucket included) and `agreement` are advice only; `answers` holds the raw probabilities and scores. They gate nothing, and you stay responsible for the call. If the result is `unavailable` or `failed`, continue on your own judgement and put its `notice` in your next task comment so the board can see why triage was skipped.
 
 ## Key Endpoints (Hot Routes)
 
