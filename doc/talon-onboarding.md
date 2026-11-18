@@ -27,7 +27,7 @@ Use `--only env,skills,plugins,mcp` to run single steps and `--no-open` to print
 | `env` | Adds the atlas marketplace clone to `PAPERCLIP_SKILL_IMPORT_ROOTS` so local skill imports from it pass the import boundary (`skill-import-roots.ts`). |
 | `skills` | Imports atlas-core, atlas-design and `jira-story-groomer` as linked `local_path` skills. They follow `claude plugin marketplace update`. atlas-toolkit's `langfuse` and `prompt-engineer` are skipped because they duplicate atlas-core's. |
 | `plugins` | Copies the installed atlas-core plugin into the company plugin store (`claude-plugin-sync.mjs`) and allow-lists it per agent. This is what delivers the plugin hooks (secret and credential scanning) to the agent. |
-| `mcp` | Creates or reconnects `talon-mcp-gw-uk-nonprod` with the shared Cognito client, sets `mcpSessionRequired`, and assigns only the configured agents, with only the configured risk levels allowed and the rest ask-first. |
+| `mcp` | Creates or reconnects `talon-mcp-gw-uk-nonprod` and `talon-mcp-gw-uk-prod` with their Cognito clients, sets `mcpSessionRequired`, and assigns only the configured agents, with only the configured risk levels allowed and the rest ask-first. |
 
 ## Config reference
 
@@ -43,9 +43,9 @@ Use `--only env,skills,plugins,mcp` to run single steps and `--no-open` to print
 
 - The plugin hooks are a pinned snapshot of the installed plugin version. After `claude plugin update`, re-run the `plugins` step. Skills are linked and follow the marketplace clone, so skills and hooks can be on different versions until you do.
 - The hooks fail closed. They need `trufflehog` and `jq` on the host running the agent.
-- `talon-mcp-gw-uk-nonprod` needs `mcpSessionRequired: true`. Without it tool discovery returns HTTP 422.
+- `talon-mcp-gw-uk-nonprod` and `talon-mcp-gw-uk-prod` need `mcpSessionRequired: true`. Without it tool discovery returns HTTP 422.
 - The Cognito client allows `http://localhost:3100/api/tools/oauth/callback` and the `127.0.0.1` variant. A Paperclip server on another port needs its callback added in `Plato2.0/infra/cluster` (`mcp_gateway_callback_urls`).
-- Prod gateways are intentionally not configured.
+- Only the UK prod gateway is configured, read-only. US prod and US non-prod gateways are not configured.
 
 ## Not covered
 
