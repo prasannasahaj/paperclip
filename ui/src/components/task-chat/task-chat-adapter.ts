@@ -7,7 +7,7 @@
  * the baseline live thread renders the author-typed message history + optimistic
  * echo, which is the core legibility win.
  */
-import type { Agent } from "@paperclipai/shared";
+import { parseConversationRewind, type Agent } from "@paperclipai/shared";
 import type { IssueChatComment } from "@/lib/issue-chat-messages";
 import { resolveCommentAttribution } from "@/lib/comment-attribution";
 import { resolveIssueChatHumanAuthor } from "@/lib/issue-chat-human-author";
@@ -65,16 +65,52 @@ export function formatTaskChatCommentTimestamp(
   return formatTaskChatTimestamp(comment.createdAt);
 }
 
+const REWOUND_EXCERPT_CHARS = 80;
+
+function rewoundCommentIds(comments: IssueChatComment[]): Set<string> {
+  const ids = new Set<string>();
+  comments.forEach((comment, rewindIndex) => {
+    if (comment.deletedAt || comment.conversationSessionGeneration == null) return;
+    const rewind = parseConversationRewind(comment.body);
+    if (!rewind) return;
+    const targetIndex = comments.findIndex((candidate) => candidate.id === rewind.targetCommentId);
+    if (targetIndex < 0 || targetIndex >= rewindIndex) return;
+    comments.slice(targetIndex + 1, rewindIndex).forEach((skipped) => {
+      if (!skipped.deletedAt) ids.add(skipped.id);
+    });
+  });
+  return ids;
+}
+
+function rewindMarkerDetail(comments: IssueChatComment[], targetCommentId: string): string {
+  const target = comments.find((comment) => comment.id === targetCommentId);
+  if (!target) return "Messages after the chosen point are no longer in the agent's context.";
+  const text = target.body.trim().replace(/\s+/g, " ");
+  const excerpt = text.length > REWOUND_EXCERPT_CHARS ? `${text.slice(0, REWOUND_EXCERPT_CHARS)}…` : text;
+  return `Back to “${excerpt}”. Later messages are no longer in the agent's context.`;
+}
+
+function sessionBoundaryMarker(comment: IssueChatComment, comments: IssueChatComment[]): TaskChatItem {
+  const createdAtIso = new Date(comment.createdAt).toISOString();
+  const rewind = parseConversationRewind(comment.body);
+  if (rewind) {
+    return { id: comment.id, kind: "marker", variant: "session_start", label: "Rewound",
+      detail: rewindMarkerDetail(comments, rewind.targetCommentId), createdAtIso };
+  }
+  return { id: comment.id, kind: "marker", variant: "session_start", label: "New session",
+    detail: "Earlier messages and files are still available.", createdAtIso };
+}
+
 export function commentsToTaskChatItems(
   comments: IssueChatComment[],
   ctx: TaskChatAdapterContext = {},
 ): TaskChatItem[] {
   const items: TaskChatItem[] = [];
+  const rewoundIds = rewoundCommentIds(comments);
   for (const comment of comments) {
     if (comment.deletedAt) continue;
     if (comment.conversationSessionGeneration != null) {
-      items.push({ id: comment.id, kind: "marker", variant: "session_start", label: "New session",
-        detail: "Earlier messages and files are still available.", createdAtIso: new Date(comment.createdAt).toISOString() });
+      items.push(sessionBoundaryMarker(comment, comments));
       continue;
     }
     const kind = authorKind(comment);
@@ -152,6 +188,7 @@ export function commentsToTaskChatItems(
       presentation: kind === "system" ? comment.presentation ?? null : undefined,
       metadata: kind === "system" ? comment.metadata ?? null : undefined,
       runAgentId: kind === "system" ? comment.runAgentId ?? null : undefined,
+      ...(rewoundIds.has(comment.id) ? { rewound: true } : {}),
       createdAtIso,
     });
   }

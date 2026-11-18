@@ -336,3 +336,61 @@ describe("commentsToTaskChatItems", () => {
     expect(item.metadata).toBeUndefined();
   });
 });
+
+describe("commentsToTaskChatItems after a rewind", () => {
+  const comment = (id: string, body: string, extra: Record<string, unknown> = {}) => ({
+    id, body, authorType: "user", authorUserId: "owner", createdAt: "2026-11-18T10:00:00Z", ...extra,
+  } as unknown as IssueChatComment);
+  const TARGET = "3f2c1a6e-8b7d-4c1e-9a55-0d6f2b7e1a10";
+
+  const thread = (rewindBody = `/rewind ${TARGET}`) => [
+    comment("earlier", "Earlier analysis"),
+    comment(TARGET, "Keep this analysis"),
+    comment("side-1", "Side question"),
+    comment("side-2", "Side answer", { authorType: "agent", authorAgentId: "agent-1", authorUserId: null }),
+    comment("rewind-1", rewindBody, { conversationSessionGeneration: 1 }),
+    comment("after", "Continue from here"),
+  ];
+
+  it("renders a rewind boundary as a Rewound marker that names the target message", () => {
+    const marker = commentsToTaskChatItems(thread()).find((item) => item.id === "rewind-1");
+    expect(marker).toMatchObject({ kind: "marker", variant: "session_start", label: "Rewound" });
+    expect((marker as { detail?: string }).detail).toContain("Keep this analysis");
+  });
+
+  it("marks only comments after the target and before the marker as rewound", () => {
+    const items = commentsToTaskChatItems(thread());
+    const flags = Object.fromEntries(items.filter((item) => item.kind === "message")
+      .map((item) => [item.id, (item as { rewound?: boolean }).rewound === true]));
+    expect(flags).toEqual({ earlier: false, [TARGET]: false, "side-1": true, "side-2": true, after: false });
+  });
+
+  it("keeps the rewound comments in the list", () => {
+    expect(commentsToTaskChatItems(thread()).map((item) => item.id)).toEqual(["earlier", TARGET, "side-1", "side-2", "rewind-1", "after"]);
+  });
+
+  it("handles two rewinds in one thread", () => {
+    const SECOND = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const comments = [
+      ...thread(),
+      comment(SECOND, "Second keeper"),
+      comment("second-side", "Second derailment"),
+      comment("rewind-2", `/rewind ${SECOND}`, { conversationSessionGeneration: 2 }),
+    ];
+    const flags = Object.fromEntries(commentsToTaskChatItems(comments).filter((item) => item.kind === "message")
+      .map((item) => [item.id, (item as { rewound?: boolean }).rewound === true]));
+    expect(flags).toMatchObject({ "side-1": true, after: false, [SECOND]: false, "second-side": true });
+  });
+
+  it("renders a rewind to an unknown target as a plain Rewound marker and marks nothing", () => {
+    const unknown = "00000000-0000-4000-8000-000000000000";
+    const items = commentsToTaskChatItems(thread(`/rewind ${unknown}`));
+    expect(items.find((item) => item.id === "rewind-1")).toMatchObject({ kind: "marker", label: "Rewound" });
+    expect(items.some((item) => (item as { rewound?: boolean }).rewound)).toBe(false);
+  });
+
+  it("keeps a plain /new boundary labelled as a new session", () => {
+    expect(commentsToTaskChatItems(thread("/new")).find((item) => item.id === "rewind-1"))
+      .toMatchObject({ kind: "marker", label: "New session" });
+  });
+});

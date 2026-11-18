@@ -245,13 +245,18 @@ function TaskChatBubbleContent({
   return (
     <div
       data-conversation-message={isHuman ? "human" : "agent"}
+      data-rewound={item.rewound ? "true" : undefined}
       ref={readRef}
       className={cn(
         "flex w-full flex-col gap-1",
         animateEntry && "tc-enter-bubble",
         isOwnMessage ? "items-end" : "items-start",
+        item.rewound && "opacity-50",
       )}
     >
+      {item.rewound ? (
+        <span data-testid="task-chat-rewound-label" className="px-1 text-xs font-medium text-muted-foreground">Rewound</span>
+      ) : null}
       {beforeTurn ? <div className="w-full pb-1">{beforeTurn}</div> : null}
       {item.chatMessage && <Link to={`/issues/${item.chatMessage.sourceTaskIdentifier}`} className="px-1 text-xs text-muted-foreground underline underline-offset-4">
         From {item.chatMessage.sourceTaskIdentifier}
