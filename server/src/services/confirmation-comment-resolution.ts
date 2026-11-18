@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { companies, heartbeatRuns, issueComments, issueThreadInteractions, issues, type Db } from "@paperclipai/db";
 import {
-  normalizeIssueThreadInteractionResolverPolicy, resolveConfirmationFromCommentSchema,
+  isConversationResetBody, normalizeIssueThreadInteractionResolverPolicy, resolveConfirmationFromCommentSchema,
   type InteractionResolverGovernance, type IssueThreadInteractionKind, type ResolveConfirmationFromComment,
 } from "@paperclipai/shared";
 import { assertAgentRunWriteAllowed } from "../agent-run-cancellation.js";
@@ -66,7 +66,7 @@ export async function resolveConfirmationFromComment(db: Db, args: {
     if (!comment || comment.deletedAt || comment.authorType !== "user"
       || !comment.authorUserId || comment.authorAgentId || comment.createdByRunId
       || comment.sourceTrust?.disposition === "quarantined"
-      || comment.createdAt < card.createdAt || comment.body.trim() === "/new") {
+      || comment.createdAt < card.createdAt || isConversationResetBody(comment.body)) {
       throw unprocessable("The answer must be a user message posted after this confirmation on the same task");
     }
     if ((issue.conversationUserId && comment.authorUserId !== issue.conversationUserId)

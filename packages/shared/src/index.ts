@@ -3163,4 +3163,4 @@ export * from "./mcp-apps.js";
 export * from "./tool-call-progress.js";
 export * from "./mcp-skills.js";
 export type { TailscaleConnection, TailscaleDeviceLogin } from "./types/tailscale.js";
-export { parseConversationRewind, buildConversationRewindBody, type ConversationRewind } from "./conversation-rewind.js";
+export { parseConversationRewind, buildConversationRewindBody, isConversationResetBody, type ConversationRewind } from "./conversation-rewind.js";

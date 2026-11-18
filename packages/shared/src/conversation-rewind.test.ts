@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationRewindBody, parseConversationRewind } from "./conversation-rewind.js";
+import { buildConversationRewindBody, isConversationResetBody, parseConversationRewind } from "./conversation-rewind.js";
 
 const TARGET_ID = "3f2c1a6e-8b7d-4c1e-9a55-0d6f2b7e1a10";
 
@@ -45,5 +45,19 @@ describe("buildConversationRewindBody", () => {
 
   it("produces the canonical body", () => {
     expect(buildConversationRewindBody(TARGET_ID)).toBe(`/rewind ${TARGET_ID}`);
+  });
+});
+
+describe("isConversationResetBody", () => {
+  it("is true for /new and for a rewind body", () => {
+    expect(isConversationResetBody("/new")).toBe(true);
+    expect(isConversationResetBody(` /new\n`)).toBe(true);
+    expect(isConversationResetBody(`/rewind ${TARGET_ID}`)).toBe(true);
+  });
+
+  it("is false for ordinary text and malformed commands", () => {
+    expect(isConversationResetBody("hello")).toBe(false);
+    expect(isConversationResetBody("/new please")).toBe(false);
+    expect(isConversationResetBody(`/rewind ${TARGET_ID} please`)).toBe(false);
   });
 });

@@ -4,7 +4,12 @@ import { notifyStatusCardIssueChange } from "./status-card-notifications.js";
 import { notifyIssueRecovery } from "./issue-recovery-notifications.js";
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
 import { notifyUnsafeWorkspaceExportRecovery } from "./unsafe-workspace-export-notifications.js";
-import { FAST_RESPONSE_AGENT_GUIDANCE, fastResponseHistoryBody } from "@paperclipai/shared";
+import {
+  FAST_RESPONSE_AGENT_GUIDANCE,
+  fastResponseHistoryBody,
+  isConversationResetBody,
+  parseConversationRewind,
+} from "@paperclipai/shared";
 import {
   persistActivity,
   publishActivity,
@@ -29,7 +34,7 @@ import { sanitizeQuarantinedCommentForHigherTrust } from "./source-trust.js";
 import { evaluateAgentInvokabilityFromDb } from "./agent-invokability.js";
 import { createHeartbeatTimerPolicy, parseHeartbeatPolicy } from "./heartbeat/timer-policy.js";
 import { isAgentAwaitingSetup } from "../modules/agent-lifecycle/index.js";
-import { HttpError } from "../errors.js";
+import { HttpError, unprocessable } from "../errors.js";
 import { ONBOARDING_CHAT_GREETING_REASON } from "./onboarding-chat-prompt.js";
 
 import { isConversation, isWaitingConversation, type ConversationIdentity } from "../lib/conversation-wake-policy.js";
@@ -59,7 +64,42 @@ export function isSupersededConversationRun(
  * finalization is too late to prevent a deferred dependency follow-up.
  */
 export function isConversationReset(body: string): boolean {
-  return body.trim() === "/new";
+  return isConversationResetBody(body);
+}
+
+export async function assertConversationRewindTarget(
+  db: Db,
+  issue: Pick<
+    typeof issues.$inferSelect,
+    "id" | "companyId" | "conversationAgentId" | "conversationUserId" | "conversationBoundaryCommentId"
+  >,
+  body: string,
+) {
+  const rewind = parseConversationRewind(body);
+  if (!rewind) return;
+  const [target] = await db
+    .select()
+    .from(issueComments)
+    .where(and(
+      eq(issueComments.id, rewind.targetCommentId),
+      eq(issueComments.issueId, issue.id),
+      eq(issueComments.companyId, issue.companyId),
+    ));
+  const [boundary] = issue.conversationBoundaryCommentId
+    ? await db
+        .select({ createdAt: issueComments.createdAt })
+        .from(issueComments)
+        .where(eq(issueComments.id, issue.conversationBoundaryCommentId))
+    : [];
+  const writtenByOwner = target?.authorType === "user" && target.authorUserId === issue.conversationUserId;
+  const writtenByConversationAgent =
+    target?.authorAgentId != null && target.authorAgentId === issue.conversationAgentId;
+  const isPlainMessage = Boolean(target) && !target!.deletedAt && !target!.presentation
+    && !isConversationResetBody(target!.body);
+  const isInCurrentSession = !boundary || (target != null && target.createdAt > boundary.createdAt);
+  if (!isPlainMessage || !(writtenByOwner || writtenByConversationAgent) || !isInCurrentSession) {
+    throw unprocessable("Choose a message from the current session to rewind to");
+  }
 }
 
 export const AGENT_CHAT_DIRECTIVE = `You are in an ongoing conversation with the user. Help them clarify the outcome they want. Ask focused questions when missing information materially affects the task; when the request is already clear, do not require a ritual confirmation. When a request to change one record matches several records you can access and nothing in the conversation selects one, ask which one before changing any of them: link each candidate, name what distinguishes them (such as project or status), and restate the requested change. Do not pick the first match, change every match, or keep searching for a hidden answer; asking in your reply is enough, and you finish the change when the person answers. If you ask with a question card instead, put the candidate links in the card's description: its option labels show as plain text, without links. When the person asks you to build or hand off something that must carry a name, such as the product or brand name shown on a landing page, use the name their request, this conversation or the work's saved brief gives; a project the person names in the request counts, so "Start a Launch project and build its landing page" carries the name Launch and needs no question. Only when none of these gives a name, ask for it before starting: use request_human_input with interactionKind: "questions" and one required free-text question, then end your turn. Do not take the name from unrelated records such as other existing projects or the company name. Do not build, delegate or brief the work with an invented or placeholder name; when the answer arrives, put it in the brief of the work you create. This name rule is for work you create yourself. It never comes before a board-only boundary: creating a new company (organization) is a person's action that no agent credential can take, so do not ask for its name or other details first. Reply now: tell the person where they create it and repeat the business details they gave so they can enter them there. Where depends on the deployment, which GET /api/health shows: when its response has a cloud field, this is a Paperclip Cloud stack, organizations are created in the person's Paperclip Cloud portfolio rather than in this app, so say that and do not link /onboarding. Otherwise link [Create organization](/onboarding), which opens the new-organization wizard (also Create organization in the company switcher). /onboarding takes no company prefix; /<prefix>/onboarding only adds an agent to this company.
@@ -239,7 +279,12 @@ export async function prepareConversationTurn(
           entityType: "issue",
           entityId: issue.id,
           runId: run.id,
-          details: { generation, boundaryCommentId: comment.id, expiredInteractionIds: expiredQuestions.map((row) => row.id) },
+          details: {
+            generation,
+            boundaryCommentId: comment.id,
+            rewoundToCommentId: parseConversationRewind(comment.body)?.targetCommentId ?? null,
+            expiredInteractionIds: expiredQuestions.map((row) => row.id),
+          },
         })
       ).publication;
       // Deliberately do not touch agentRuntimeState or sessions belonging to other tasks.
