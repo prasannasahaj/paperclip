@@ -8,7 +8,7 @@ import express from "express";
 import request from "supertest";
 import { createDb, companies, agents, companyMemberships, heartbeatRuns, issues, activityLog } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "@paperclipai/db/test-embedded-postgres";
-import { taskTriageRequestSchema, type DecisionRequest } from "@paperclipai/shared";
+import { TASK_TRIAGE_WORK_TYPES, taskTriageRequestSchema, type DecisionRequest } from "@paperclipai/shared";
 import type { AuthorizationActor } from "../services/authorization.js";
 import { decisionReceipt, type DecisionProviderOutcome } from "../services/decision-model-provider.js";
 
@@ -96,7 +96,7 @@ describe("task triage decision route", () => {
     expect(res.body).toEqual({ status: "succeeded", answers: d3Outcome.answers,
       verdicts: { single_repo: true, fits_one_small_mr: true, touches_gated_area: false, size: "medium" },
       agreement: { single_repo: true, fits_one_small_mr: false, touches_gated_area: false, size: true } });
-    expect(Object.keys(sentRequest().questions).sort()).toEqual(["fits_one_small_mr", "single_repo", "size", "touches_gated_area"]);
+    expect(Object.keys(sentRequest().questions).sort()).toEqual(["fits_one_small_mr", "single_repo", "size", "touches_gated_area", "work_type"]);
     expect(JSON.stringify(sentRequest().state)).toContain(SECRET_TASK);
     const [entry, ...rest] = await triageEntries(f.companyId);
     expect(rest).toHaveLength(0);
@@ -141,6 +141,28 @@ describe("task triage decision route", () => {
     expect(unavailable.status).toBe(200);
     expect(unavailable.body).toEqual({ status: "unavailable", reason: "disabled" });
     expect(await triageEntries(f.companyId)).toHaveLength(0);
+  });
+
+  it("classifies the kind of work across delivery, not only code, and compares it with the agent's own call", async () => {
+    const f = await fixture();
+    providerCall.mockResolvedValue({ ...structuredClone(d3Outcome), answers: { ...structuredClone(d3Outcome.answers), work_type: { type: "choice", choice: "support_investigation" } } });
+    const res = await request(appAs(f.board)).post(f.url).send({ task: "Why did this campaign under-deliver?", agentAnswers: { work_type: "implementation" } });
+    expect(res.body).toMatchObject({ status: "succeeded", verdicts: { work_type: "support_investigation" }, agreement: { work_type: false } });
+    const workType = sentRequest().questions.work_type;
+    expect(workType.type).toBe("choice");
+    expect(Object.keys(workType.type === "choice" ? workType.criteria : {})).toEqual([...TASK_TRIAGE_WORK_TYPES]);
+    expect([...TASK_TRIAGE_WORK_TYPES]).toEqual(["support_investigation", "data_analysis", "product_discovery", "story_grooming", "implementation", "testing", "deployment", "stakeholder_communication"]);
+    expect((await request(appAs(f.board)).post(f.url).send({ task: "Fix it", agentAnswers: { work_type: "gardening" } })).status).toBe(400);
+  });
+
+  it("asks about gates that apply outside code: production changes, live data and outward communication", async () => {
+    const f = await fixture();
+    await request(appAs(f.board)).post(f.url).send({ task: "Move the cutoff date on prod" });
+    const gate = sentRequest().questions.touches_gated_area.instructions;
+    expect(gate).toMatch(/production configuration, deployment or release/);
+    expect(gate).toMatch(/live data/);
+    expect(gate).toMatch(/Jira, Confluence or Slack/);
+    expect(gate).toMatch(/bidder\/RTB\/pacing\/budget\/billing/);
   });
 
   it("lets a board user triage, asks the pack question only when pack choices are given, and logs against the company", async () => {
