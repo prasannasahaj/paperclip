@@ -43,6 +43,7 @@ import {
   type AttachmentRef,
 } from "./task-chat-attachments";
 import { TaskChatBubbleActions } from "./TaskChatBubbleActions";
+import { useTaskChatRewind } from "./rewind-context";
 import { TaskChatSystemNotice } from "./TaskChatSystemNotice";
 import type { TaskChatMessageItem } from "./task-chat-model";
 
@@ -163,6 +164,7 @@ function TaskChatBubbleContent({
   tryAgainNoLiveExecutionPathPending,
 }: TaskChatBubbleProps) {
   const readRef = useAgentChatRead(item.id, item.createdAtIso, item.author === "agent" && !item.optimistic);
+  const rewind = useTaskChatRewind();
   const streamlined = useStreamlinedTaskChatPresentation();
   const coordinator = useCoordinatorPresentation();
   const recordedTimestamp = item.createdAtIso ?? (typeof item.atMs === "number" && Number.isFinite(item.atMs) ? new Date(item.atMs) : null);
@@ -440,7 +442,10 @@ function TaskChatBubbleContent({
       ) : isOwnMessage ? (
         <div className="group/message-toolbar flex items-center gap-1">
           <div className="transition-opacity motion-reduce:transition-none sm:opacity-0 sm:group-hover/message-toolbar:opacity-100 sm:group-focus-within/message-toolbar:opacity-100 pointer-coarse:opacity-100">
-            <TaskChatBubbleActions copyText={item.text} />
+            <TaskChatBubbleActions
+              copyText={item.text}
+              onRewindTo={rewind?.canRewind(item.id) ? () => rewind.rewindTo(item.id) : undefined}
+            />
           </div>
           <span className="px-1 text-(length:--text-micro) text-muted-foreground">
             {sentFromIMessage ? "Sent from iMessage" : null}

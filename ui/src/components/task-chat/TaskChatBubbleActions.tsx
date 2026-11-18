@@ -5,7 +5,7 @@ import type {
 import { useCopyAction } from "@/lib/use-copy-action";
 import { IssueChatFeedbackButtons } from "@/components/AgentBubbleActionRow";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, Copy, X, Info } from "lucide-react";
+import { Check, Copy, Undo2, X, Info } from "lucide-react";
 
 /** Feedback-vote wiring for an agent bubble, resolved per comment by the host. */
 export interface TaskChatBubbleFeedback {
@@ -30,10 +30,12 @@ export function TaskChatBubbleActions({
   copyText,
   feedback,
   fastResponse,
+  onRewindTo,
 }: {
   copyText: string;
   fastResponse?: boolean;
   feedback?: TaskChatBubbleFeedback | null;
+  onRewindTo?: () => void;
 }) {
   const { copied, failed, copy } = useCopyAction(2000);
   const label = failed ? "Couldn’t copy message" : "Copy message";
@@ -57,6 +59,17 @@ export function TaskChatBubbleActions({
           <Copy className="h-3.5 w-3.5" />
         )}
       </button>
+      {onRewindTo ? (
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Rewind to here"
+          aria-label="Rewind to here"
+          onClick={onRewindTo}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
       {fastResponse && <Popover><PopoverTrigger asChild><button type="button" aria-label="Message details" title="Message details" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Info className="h-3.5 w-3.5" /></button></PopoverTrigger><PopoverContent className="text-xs">Platform-generated acknowledgement. The agent’s substantive response follows separately.</PopoverContent></Popover>}
       {feedback ? (
         <IssueChatFeedbackButtons

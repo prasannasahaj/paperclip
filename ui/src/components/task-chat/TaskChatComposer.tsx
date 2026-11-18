@@ -59,6 +59,8 @@ import {
 } from "@/components/ui/attachment";
 import { fileKindForName, formatFileSize, isImageAttachment } from "./task-chat-attachments";
 import { parseCompactCommand, type ParsedCompactCommand } from "./compact-command";
+import { isBareRewindCommand, type RewindTarget } from "./rewind-targets";
+import { buildConversationRewindBody } from "@paperclipai/shared";
 import type { ContextCompactState } from "../ContextUsageMeter";
 import {
   MarkdownEditor,
@@ -191,6 +193,8 @@ interface TaskChatComposerProps {
   ) => Promise<void> | void;
   compactState?: ContextCompactState | null;
   onCompactContext?: () => Promise<void> | void;
+  /** Messages in the current session a conversation can rewind to, newest first. */
+  rewindTargets?: RewindTarget[];
 }
 
 export type RunnerGoalComposerCommand =
@@ -432,6 +436,7 @@ export function TaskChatComposer({
   onRunnerGoalReassign,
   compactState = null,
   onCompactContext,
+  rewindTargets = [],
 }: TaskChatComposerProps) {
   const streamlined = useStreamlinedTaskChatPresentation();
   const submitKey = useComposerSubmitKey();
@@ -469,6 +474,7 @@ export function TaskChatComposer({
   const setRunSettings = creation ? creation.onRunSettingsChange : setLocalRunSettings;
   useEffect(() => setLocalRunSettings(null), [draftKey, currentAssigneeValue]);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [rewindPickerOpen, setRewindPickerOpen] = useState(false);
   const [attachments, setAttachmentState] = useState<ComposerAttachment[]>(
     () =>
       draftKey
@@ -875,6 +881,32 @@ export function TaskChatComposer({
     disabledReason: compactState?.status === "unavailable" ? compactState.reason : null,
   };
 
+  const rewindCommandOption: ActionCommandOption = {
+    id: "action:rewind",
+    kind: "action",
+    command: "rewind",
+    name: "Rewind",
+    description: "Return to an earlier message and drop what came after it from the agent's context.",
+    aliases: ["rewind", "undo"],
+    disabled: rewindTargets.length === 0,
+    disabledReason: rewindTargets.length === 0 ? "There is no earlier message in this session to rewind to." : null,
+  };
+
+  function openRewindPicker() {
+    if (rewindTargets.length === 0) {
+      setActionError("There is no earlier message in this session to rewind to.");
+      return;
+    }
+    setActionError(null);
+    setRewindPickerOpen(true);
+  }
+
+  async function rewindTo(target: RewindTarget) {
+    setRewindPickerOpen(false);
+    changeBody(buildConversationRewindBody(target.id));
+    await submit();
+  }
+
   function clearComposerAfterCommand() {
     bodyRef.current = "";
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -996,6 +1028,10 @@ export function TaskChatComposer({
     const submittedAssignee = pendingAssigneeRef.current;
     const submittedModeGeneration = modeChoiceGeneration.current;
     const trimmed = submittedBody.trim();
+    if (conversationMode && !queuedEdit && isBareRewindCommand(submittedBody)) {
+      openRewindPicker();
+      return;
+    }
     const compactCommand =
       queuedEdit || !onCompactContext
         ? ({ matched: false } as const)
@@ -1483,6 +1519,35 @@ export function TaskChatComposer({
               if (image) retryUpload(image);
             }}
           />
+          {rewindPickerOpen ? (
+            <div data-testid="task-chat-rewind-picker" className="rounded-lg border border-border bg-muted/25 text-sm">
+              <div className="flex items-center justify-between gap-2 px-3 py-2">
+                <span className="font-medium text-foreground">Rewind to which message?</span>
+                <button
+                  type="button"
+                  aria-label="Cancel rewind"
+                  className="rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setRewindPickerOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+              <ul className="max-h-(--sz-28dvh) overflow-y-auto border-t border-border/70">
+                {rewindTargets.map((target) => (
+                  <li key={target.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-accent"
+                      onClick={() => void rewindTo(target)}
+                    >
+                      <span className="shrink-0 text-xs font-medium text-muted-foreground">{target.authorLabel}</span>
+                      <span className="min-w-0 truncate text-foreground">{target.excerpt}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div data-testid="task-chat-composer-input">
             <MarkdownEditor
               ref={editorRef}
@@ -1495,7 +1560,7 @@ export function TaskChatComposer({
               }
               readOnly={disabled || !!uncertainSubmission || Boolean(creation && (submitting || creation.readOnly))}
               mentions={mentions}
-              actionCommands={creation ? [] : conversationMode ? [compactCommandOption, {
+              actionCommands={creation ? [] : conversationMode ? [compactCommandOption, rewindCommandOption, {
                 id: "action:new", kind: "action", command: "new", name: "New session",
                 description: "Start fresh context here, preserving conversation history.", aliases: ["new"],
                 disabled,
