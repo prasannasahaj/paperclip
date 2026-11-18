@@ -2002,6 +2002,165 @@ describe("TaskChatComposer", () => {
     expect(editable().textContent).toBe(`[/deploy](${SLASH_HREF}) `);
   });
 
+  describe("/compact action command", () => {
+    const availableCompaction = { status: "available" as const, onCompact: vi.fn() };
+
+    async function offeredInSlashMenu(conversationMode: boolean) {
+      render(<TaskChatComposer onAdd={vi.fn()} workMode="standard" conversationMode={conversationMode} />);
+      typeText("/comp");
+      await placeCaretAtEnd();
+      return autocompleteOption("/compact");
+    }
+
+    function alertText() {
+      return container.querySelector('[role="alert"]')?.textContent ?? null;
+    }
+
+    async function submitWithShortcut() {
+      pressKey("Enter", { metaKey: true });
+      await flushAsync();
+    }
+
+    it("offers /compact in the slash menu for task chat", async () => {
+      expect(await offeredInSlashMenu(false)).toBeTruthy();
+    });
+
+    it("offers /compact in the slash menu for a conversation", async () => {
+      expect(await offeredInSlashMenu(true)).toBeTruthy();
+    });
+
+    it("runs onCompactContext instead of posting a comment for a bare /compact", async () => {
+      const onAdd = vi.fn().mockResolvedValue(undefined);
+      const onCompactContext = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAdd, workMode: "standard", compactState: availableCompaction, onCompactContext });
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(onCompactContext).toHaveBeenCalledTimes(1);
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("");
+    });
+
+    it("shows the server reason and keeps the draft when compaction is unavailable", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      const reason = "Available when the agent finishes its current run.";
+      renderComposer({
+        onAdd,
+        workMode: "standard",
+        compactState: { status: "unavailable", reason },
+        onCompactContext,
+      });
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(alertText()).toBe(reason);
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("/compact");
+    });
+
+    it("explains that compaction needs a reported context when none is known yet", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      renderComposer({ onAdd, workMode: "standard", compactState: null, onCompactContext });
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(alertText()).toBe("Context compaction is unavailable until the agent has reported its context.");
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("/compact");
+    });
+
+    it("does nothing while a compaction is already pending", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      renderComposer({ onAdd, workMode: "standard", compactState: { status: "pending" }, onCompactContext });
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("/compact");
+    });
+
+    it("rejects /compact with arguments instead of posting it as a message", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      renderComposer({ onAdd, workMode: "standard", compactState: availableCompaction, onCompactContext });
+
+      typeText("/compact be brief");
+      await submitWithShortcut();
+
+      expect(alertText()).toBe("/compact does not accept arguments.");
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("rejects /compact while attachments are present", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      const onAttachImage = vi.fn().mockResolvedValue({
+        contentPath: "/attachments/notes.txt",
+        originalFilename: "notes.txt",
+      });
+      renderComposer({
+        onAdd,
+        workMode: "standard",
+        compactState: availableCompaction,
+        onCompactContext,
+        onAttachImage,
+      });
+      pasteFiles([new File(["plain"], "notes.txt", { type: "text/plain" })]);
+      await flushAsync();
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(alertText()).toBe("Remove attachments before using /compact.");
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("keeps /compact blocked while a conversation is paused", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn();
+      renderComposer({
+        onAdd,
+        workMode: "standard",
+        conversationMode: true,
+        pause: { scope: "leaf" },
+        compactState: availableCompaction,
+        onCompactContext,
+      });
+
+      typeText("/compact");
+      expect(sendButton().disabled).toBe(true);
+      await act(async () => sendButton().click());
+
+      expect(onCompactContext).not.toHaveBeenCalled();
+      expect(onAdd).not.toHaveBeenCalled();
+    });
+
+    it("shows the error and keeps the draft when onCompactContext rejects", async () => {
+      const onAdd = vi.fn();
+      const onCompactContext = vi.fn().mockRejectedValue(new Error("Compaction did not start."));
+      renderComposer({ onAdd, workMode: "standard", compactState: availableCompaction, onCompactContext });
+
+      typeText("/compact");
+      await submitWithShortcut();
+
+      expect(alertText()).toBe("Compaction did not start.");
+      expect(onAdd).not.toHaveBeenCalled();
+      expect(editable().textContent).toBe("/compact");
+    });
+  });
+
   describe("/goal action commands", () => {
     const capability = {
       availability: "available" as const,

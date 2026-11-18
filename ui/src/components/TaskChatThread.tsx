@@ -132,6 +132,7 @@ import { TaskChatQueuedMessages } from "@/components/task-chat/TaskChatQueuedMes
 import { QUEUED_MESSAGE_AUTO_STEER_DELAY_MS } from "@/components/task-chat/queued-message-auto-steer";
 import { useSidebar } from "@/context/SidebarContext";
 import { useStreamlinedUiEnabled } from "@/hooks/useStreamlinedUiEnabled";
+import { useCompactContext } from "@/hooks/useCompactContext";
 import { useDismissedTaskQuestions } from "@/hooks/useDismissedTaskQuestions";
 import { cn } from "@/lib/utils";
 import { ANALYTICS_MASK_CLASS } from "@/lib/analytics/privacy";
@@ -704,6 +705,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
       ? effectiveComposerAssignee.slice("agent:".length) || null
       : null;
   const runnerGoal = useRunnerGoalControl(issueId, effectiveGoalAgentId);
+  const compactContext = useCompactContext(issueId, issueAssigneeAgentId);
 
   useEffect(() => {
     setPendingComposerAssignee(null);
@@ -3736,6 +3738,8 @@ export function TaskChatThread(props: TaskChatThreadProps) {
                           takeover={composerTakeover}
                           runnerGoalCapability={runnerGoal.data?.capability ?? null}
                           onRunnerGoalCommand={runnerGoal.executeComposerCommand}
+                          compactState={compactContext.state}
+                          onCompactContext={compactContext.compact}
                           onRunnerGoalReassign={reassignForRunnerGoal}
                           pendingTakeover={
                             pendingReminderInputs.length > 0
