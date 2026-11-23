@@ -71,17 +71,49 @@ function createLogger(dryRun) {
   };
 }
 
-function createApi(serverUrl) {
+const LOGIN_HINT = "Run `pnpm paperclipai auth login` (or set PAPERCLIP_API_KEY) and re-run.";
+
+function stripTrailingSlashes(url) {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function resolveAuthStorePath(env) {
+  if (env.PAPERCLIP_AUTH_STORE?.trim()) return path.resolve(env.PAPERCLIP_AUTH_STORE.trim());
+  const home = path.resolve(expandHome(env.PAPERCLIP_HOME ?? path.join(os.homedir(), ".paperclip")));
+  return path.join(home, "auth.json");
+}
+
+export async function resolveBoardToken(serverUrl, env = process.env) {
+  const fromEnv = env.PAPERCLIP_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  let store;
+  try {
+    store = JSON.parse(await fs.readFile(resolveAuthStorePath(env), "utf8"));
+  } catch {
+    return null;
+  }
+  const credentials = store?.credentials ?? {};
+  const wanted = stripTrailingSlashes(serverUrl);
+  const match = Object.entries(credentials).find(([key]) => stripTrailingSlashes(key) === wanted);
+  const token = match?.[1]?.token;
+  return typeof token === "string" && token.trim() ? token.trim() : null;
+}
+
+export function createApi(serverUrl, token = null, fetchImpl = fetch) {
   return async function api(method, route, body) {
-    const response = await fetch(new URL(`/api${route}`, serverUrl), {
+    const headers = {};
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (token) headers.authorization = `Bearer ${token}`;
+    const response = await fetchImpl(new URL(`/api${route}`, serverUrl), {
       method,
-      headers: body === undefined ? {} : { "content-type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();
     const payload = text ? JSON.parse(text) : null;
     if (!response.ok) {
-      const error = new Error(`${method} ${route} -> HTTP ${response.status}: ${payload?.error ?? text}`);
+      const loginHint = response.status === 401 || response.status === 403 ? ` ${LOGIN_HINT}` : "";
+      const error = new Error(`${method} ${route} -> HTTP ${response.status}: ${payload?.error ?? text}.${loginHint}`);
       error.status = response.status;
       error.code = payload?.code ?? payload?.details?.code ?? null;
       throw error;
@@ -277,7 +309,7 @@ async function main() {
   }
   const config = JSON.parse(await fs.readFile(options.config, "utf8"));
   const log = createLogger(options.dryRun);
-  const api = createApi(config.serverUrl);
+  const api = createApi(config.serverUrl, await resolveBoardToken(config.serverUrl));
   const context = { api, log, dryRun: options.dryRun, open: options.open };
 
   if (options.only.has("env")) {
