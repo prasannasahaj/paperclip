@@ -861,7 +861,7 @@ async function attachPlaywrightBrowserServer(input: {
   input.mcpServers.push(launch.server);
   await input.onLog(
     "stdout",
-    `[paperclip] Playwright browser network stubbing: browser_route ${browser.mockNetwork ? "available" : "off"}, ${browser.initScripts.length} init script(s), ${browser.initPages.length} init page(s).\n`,
+    `[paperclip] Playwright browser network stubbing: browser_route ${browser.mockNetwork ? "available" : "off"}.\n`,
   );
   const login = launch.loginRestored
     ? `restoring saved login from ${launch.storageStatePath}`

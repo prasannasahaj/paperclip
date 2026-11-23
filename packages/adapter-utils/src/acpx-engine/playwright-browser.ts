@@ -14,8 +14,6 @@ export interface PlaywrightBrowserConfig {
   storageStatePath: string | null;
   allowedOrigins: string[];
   mockNetwork: boolean;
-  initScripts: string[];
-  initPages: string[];
 }
 
 export interface PlaywrightBrowserMcpServer {
@@ -42,14 +40,6 @@ export function defaultPlaywrightStorageStatePath(instanceRoot: string): string 
   return path.join(instanceRoot, "qa-browser", "storage-state.json");
 }
 
-function readPathList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
-
 export function readPlaywrightBrowserConfig(config: Record<string, unknown>): PlaywrightBrowserConfig {
   const browser = parseObject(config.browser);
   const storageStatePath = typeof browser.storageStatePath === "string" && browser.storageStatePath.trim()
@@ -65,8 +55,6 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
     storageStatePath,
     allowedOrigins,
     mockNetwork: browser.mockNetwork !== false,
-    initScripts: readPathList(browser.initScripts),
-    initPages: readPathList(browser.initPages),
   };
 }
 
@@ -106,8 +94,6 @@ export function buildPlaywrightBrowserLaunch(input: {
   if (loginRestored) args.push("--storage-state", storageStatePath);
   if (config.allowedOrigins.length > 0) args.push("--allowed-origins", config.allowedOrigins.join(";"));
   if (config.mockNetwork) args.push("--caps", "network");
-  for (const script of config.initScripts) args.push("--init-script", script);
-  for (const page of config.initPages) args.push("--init-page", page);
 
   const environment: Array<{ name: string; value: string }> = [];
   for (const name of ["PATH", "HOME"]) {

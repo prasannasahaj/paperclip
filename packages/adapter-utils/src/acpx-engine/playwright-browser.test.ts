@@ -16,8 +16,6 @@ const ENABLED: PlaywrightBrowserConfig = {
   storageStatePath: null,
   allowedOrigins: [],
   mockNetwork: true,
-  initScripts: [],
-  initPages: [],
 };
 
 describe("readPlaywrightBrowserConfig", () => {
@@ -38,8 +36,6 @@ describe("readPlaywrightBrowserConfig", () => {
       storageStatePath: null,
       allowedOrigins: [],
       mockNetwork: true,
-      initScripts: [],
-      initPages: [],
     });
   });
 
@@ -52,8 +48,6 @@ describe("readPlaywrightBrowserConfig", () => {
         storageStatePath: " /tmp/login.json ",
         allowedOrigins: ["http://localhost:3000", "", 7],
         mockNetwork: true,
-        initScripts: [" /qa/session.js ", "", 3],
-        initPages: ["/qa/stubs.ts"],
       },
     });
     expect(config).toEqual({
@@ -63,8 +57,6 @@ describe("readPlaywrightBrowserConfig", () => {
       storageStatePath: "/tmp/login.json",
       allowedOrigins: ["http://localhost:3000"],
       mockNetwork: true,
-      initScripts: ["/qa/session.js"],
-      initPages: ["/qa/stubs.ts"],
     });
   });
 
@@ -152,24 +144,10 @@ describe("buildPlaywrightBrowserLaunch", () => {
   it("gives the agent the browser_route mocking tool by default", () => {
     const { args } = launch(ENABLED).server;
     expect(args[args.indexOf("--caps") + 1]).toBe("network");
-    expect(args).not.toContain("--init-script");
-    expect(args).not.toContain("--init-page");
   });
 
   it("withholds the browser_route mocking tool when mockNetwork is switched off", () => {
     expect(launch({ ...ENABLED, mockNetwork: false }).server.args).not.toContain("--caps");
-  });
-
-  it("passes each init script and init page as its own flag so one cannot swallow the next argument", () => {
-    const { args } = launch({
-      ...ENABLED,
-      initScripts: ["/qa/session.js", "/qa/clock.js"],
-      initPages: ["/qa/stubs.ts"],
-    }).server;
-    const valuesOf = (flag: string) =>
-      args.flatMap((arg, index) => (arg === flag ? [args[index + 1]] : []));
-    expect(valuesOf("--init-script")).toEqual(["/qa/session.js", "/qa/clock.js"]);
-    expect(valuesOf("--init-page")).toEqual(["/qa/stubs.ts"]);
   });
 
   it("forwards only PATH, HOME and the socket directory to the browser process", () => {
