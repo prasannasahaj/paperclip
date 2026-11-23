@@ -11,11 +11,9 @@ export {
   minimumClaudeCliVersionForModel,
   resetClaudeCliCapabilitiesCacheForTests,
 } from "./cli-capabilities.js";
-export { resolveSharedClaudeConfigDir } from "./claude-config.js";
 export {
   parseClaudeStreamJson,
   describeClaudeFailure,
-  detectClaudeLoginRequired,
   isClaudeMaxTurnsResult,
   isClaudeProviderQuotaError,
   isClaudeRefusalResult,
