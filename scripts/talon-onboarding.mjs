@@ -9,14 +9,14 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG_PATH = path.join(SCRIPT_DIR, "talon-onboarding.config.json");
 const IMPORT_ROOTS_ENV_KEY = "PAPERCLIP_SKILL_IMPORT_ROOTS";
-const STEPS = ["env", "skills", "plugins", "mcp"];
+const STEPS = ["env", "skills", "mcp"];
 
 function usage() {
   return [
-    "Usage: talon-onboarding.mjs [--config <file>] [--only env,skills,plugins,mcp] [--dry-run] [--no-open]",
+    "Usage: talon-onboarding.mjs [--config <file>] [--only env,skills,mcp] [--dry-run] [--no-open]",
     "",
     "Applies scripts/talon-onboarding.config.json to a running Paperclip server. Safe to re-run.",
-    "Order: env -> restart server if it changed -> skills -> plugins -> mcp (sign in once, then re-run).",
+    "Order: env -> restart server if it changed -> skills -> mcp (sign in once, then re-run).",
   ].join("\n");
 }
 
@@ -167,37 +167,6 @@ async function importSkills(config, context) {
   }
 }
 
-function runPluginSync(config, context) {
-  const args = [
-    path.join(SCRIPT_DIR, "claude-plugin-sync.mjs"),
-    "--company", context.companyId,
-    "--only", config.plugins.sync.join(","),
-    "--claude-config-dir", path.resolve(expandHome(config.plugins.claudeConfigDir)),
-  ];
-  if (context.dryRun) args.push("--dry-run");
-  const result = spawnSync(process.execPath, args, { stdio: "inherit" });
-  if (result.status !== 0) throw new Error("claude-plugin-sync failed");
-}
-
-async function applyAgentPluginAllowLists(config, context) {
-  for (const [agentName, plugins] of Object.entries(config.plugins.agentAllowList)) {
-    const agent = context.agentsByName.get(agentName);
-    if (!agent) throw new Error(`Agent not found: ${agentName}`);
-    const current = (await context.api("GET", `/agents/${agent.id}`)).adapterConfig?.plugins ?? [];
-    if (sameMembers(current, plugins)) {
-      context.log.ok(`${agentName} plugin allow-list already ${JSON.stringify(plugins)}`);
-      continue;
-    }
-    context.log.change(`set ${agentName} plugin allow-list to ${JSON.stringify(plugins)}`);
-    if (!context.dryRun) await context.api("PATCH", `/agents/${agent.id}`, { adapterConfig: { plugins } });
-  }
-}
-
-async function setupPlugins(config, context) {
-  runPluginSync(config, context);
-  await applyAgentPluginAllowLists(config, context);
-}
-
 async function findConnection(context, name) {
   const { connections } = await context.api("GET", `/companies/${context.companyId}/tools/connections`);
   const matches = connections.filter((connection) => connection.name === name);
@@ -317,7 +286,7 @@ async function main() {
     await ensureImportRootsEnv(config, context);
   }
 
-  const needsServer = ["skills", "plugins", "mcp"].some((step) => options.only.has(step));
+  const needsServer = ["skills", "mcp"].some((step) => options.only.has(step));
   if (!needsServer) return;
 
   const companies = await api("GET", "/companies");
@@ -330,10 +299,6 @@ async function main() {
   if (options.only.has("skills")) {
     log.step("skills");
     await importSkills(config, context);
-  }
-  if (options.only.has("plugins")) {
-    log.step("plugins");
-    await setupPlugins(config, context);
   }
   if (options.only.has("mcp")) {
     log.step("mcp");

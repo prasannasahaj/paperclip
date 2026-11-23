@@ -9,13 +9,6 @@
     "~/.claude-talon/plugins/marketplaces/atlas-claude-marketplace/plugins/atlas-design/skills",
     "~/.claude-talon/plugins/marketplaces/atlas-claude-marketplace/plugins/atlas-toolkit/skills/jira-story-groomer"
   ],
-  "plugins": {
-    "claudeConfigDir": "~/.claude-talon",
-    "sync": ["atlas-core"],
-    "agentAllowList": {
-      "QA Verifier": ["atlas-core"]
-    }
-  },
   "mcpConnections": [
     {
       "name": "talon-mcp-gw-uk-nonprod",
