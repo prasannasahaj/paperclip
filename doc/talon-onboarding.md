@@ -9,6 +9,8 @@ node scripts/talon-onboarding.mjs --dry-run
 node scripts/talon-onboarding.mjs
 ```
 
+On an authenticated instance the script sends your board credential. Run `pnpm paperclipai auth login` once, or set `PAPERCLIP_API_KEY`. `PAPERCLIP_AUTH_STORE` overrides the credential file.
+
 The script is idempotent. Re-run it after any change to `scripts/talon-onboarding.config.json`.
 
 Order on a new machine:
