@@ -3324,12 +3324,10 @@ export function defaultAgentTestWorkerCount(cpuCount: number): number {
 
 function agentTestWorkerEnv(): Record<string, string> {
   if (process.env.VITEST_MAX_WORKERS) return {};
-  const operatorChoice = process.env.PAPERCLIP_AGENT_TEST_WORKERS?.trim() ?? "";
-  const operatorChoiceIsPositiveInteger = /^[1-9]\d*$/.test(operatorChoice);
+  const operatorChoice = process.env.PAPERCLIP_AGENT_TEST_WORKERS?.trim();
   return {
-    VITEST_MAX_WORKERS: operatorChoiceIsPositiveInteger
-      ? operatorChoice
-      : String(defaultAgentTestWorkerCount(os.availableParallelism())),
+    VITEST_MAX_WORKERS:
+      operatorChoice || String(defaultAgentTestWorkerCount(os.availableParallelism())),
   };
 }
 
