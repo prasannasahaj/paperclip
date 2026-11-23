@@ -150,7 +150,7 @@ describeEmbeddedPostgres("company skill local import boundary", () => {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-outside-skill-"));
     cleanupDirs.add(importRoot);
     cleanupDirs.add(outside);
-    const linkedSkill = path.join(importRoot, "plugins", "atlas-core", "skills", "review");
+    const linkedSkill = path.join(importRoot, "plugins", "example-plugin", "skills", "review");
     await fs.mkdir(linkedSkill, { recursive: true });
     await fs.writeFile(path.join(linkedSkill, "SKILL.md"), "---\nname: review\ndescription: review\n---\n# Review\n", "utf8");
     await fs.writeFile(path.join(outside, "SKILL.md"), "---\nname: escaped\ndescription: escaped\n---\n# Escaped\n", "utf8");

@@ -29,7 +29,7 @@ describe("materializeFreshWorkspaceSeed", () => {
 
   function repositoryWithProjectFolder() {
     const repository = path.join(sandbox, "repository");
-    const projectFolder = path.join(repository, "context", "epics", "tactics");
+    const projectFolder = path.join(repository, "packages", "app");
     mkdirSync(projectFolder, { recursive: true });
     writeFileSync(path.join(projectFolder, "BRIEF.md"), "brief");
     writeFileSync(path.join(repository, "README.md"), "root");
@@ -44,7 +44,7 @@ describe("materializeFreshWorkspaceSeed", () => {
 
     const cwd = await materializeFreshWorkspaceSeed({ ...identity, runId: "run-1", sourceCwd: projectFolder });
 
-    expect(path.relative(path.join(process.env.PAPERCLIP_HOME!), cwd).endsWith(path.join("workspace", "context", "epics", "tactics"))).toBe(true);
+    expect(path.relative(path.join(process.env.PAPERCLIP_HOME!), cwd).endsWith(path.join("workspace", "packages", "app"))).toBe(true);
     expect(readFileSync(path.join(cwd, "BRIEF.md"), "utf8")).toBe("brief");
   });
 

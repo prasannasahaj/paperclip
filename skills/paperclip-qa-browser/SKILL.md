@@ -40,33 +40,7 @@ Check it responds: `curl -s -o /dev/null -w "%{http_code}" <url>`. If it is not 
 
 Note the commit you are testing. If the build will not start, request changes with the error output.
 
-### Atlas explore UI (`atlas-explore-ui`)
-
-Run it from the issue's worktree with `npm run dev` (Vite on `http://localhost:3000`). It needs two gitignored files that a fresh worktree does not have: `.env.local` (copied from `.env.example` by `scripts/setup.sh`, plus the Mapbox token) and `.npmrc` (private registry). Copy both from the main checkout; they are not in git and you must not read their contents or print them:
-
-```bash
-cp "$PAPERCLIP_WORKSPACE_BASE_CWD/.env.local" "$PAPERCLIP_WORKSPACE_BASE_CWD/.npmrc" .
-```
-
-If the main checkout has no `.env.local`, stop and ask the human; do not recreate it.
-
-To run only the UI against QA backends, `.env.local` must set `VITE_USE_PROXY='true'` (see `docs/local-setup.md` in that repo). Sign-in then uses the QA Auth0 tenant, so a QA account is required.
-
-### Signing in to the Atlas explore UI without a login
-
-The app signs in through Auth0 (`loginWithRedirect` in `src/routes/_protected.tsx`). A trial run (TAC-160) got past it with no saved login by answering the Auth0 round trip itself. `browser_route` cannot do this, because the response must echo values from the request. Use `browser_run_code_unsafe` and register `context.route` handlers:
-
-1. Read the Auth0 `domain`, `clientId` and `audience` from `public/config/config.js`.
-2. Answer `GET https://<domain>/authorize` with a `302` to `http://localhost:3000/?code=fakecode&state=<state from the request>`. Keep the `nonce` from the request.
-3. Answer `POST https://<domain>/oauth/token` with JSON `access_token`, `id_token`, `token_type: "Bearer"` and `expires_in`. Build `id_token` as a JWT with header `alg: RS256` and a dummy signature, and claims `iss` (`https://<domain>/`), `aud` (the `clientId`), the captured `nonce`, `sub`, `name`, `email`, `iat`, `exp`, and the roles claim `<authClaimsNamespace>/roles` holding the role the screen needs (see `src/common/constants/roles.ts` and `src/common/hooks/usePermissions`).
-4. Register the catch-all and the API stubs from "Writing the stubs", then open `http://localhost:3000`.
-
-Things the trial found:
-
-- The Auth0 SDK did not verify the token signature, so no key endpoint needed stubbing. Assumed to hold only for the SDK version in the repo; if sign-in fails after an upgrade, check whether the SDK now verifies the signature.
-- The return path keeps only the pathname, so a `?tab=` query is dropped. Click the tab.
-- State set on `globalThis` does not survive between `browser_run_code_unsafe` calls. To change a stub, register a later override route for the same URL.
-- The token is fake and works only against `localhost`. Never use real credentials for this.
+Start-up and sign-in steps for a specific app (env files, auth provider, test accounts) belong in the company's own skill, not in this one.
 
 ## Step 3 — Use the Playwright browser
 
@@ -82,7 +56,7 @@ Work one action at a time and read each result before choosing the next:
 
 You also have `browser_route`: it answers requests matching a URL pattern with a status and body you choose. This is how you stub the application so you can reach the screen under test without signing in or seeding data. Step 4 says how to write the stubs. If `browser_route` is missing, the agent has `browser.mockNetwork` switched off; use the other routes in Step 4.
 
-If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, do not attach to a CDP port yourself (Paperclip does that when the agent has `browser.cdpEndpoint`), and do not write Playwright scripts.
+If your tools include no `browser_*` tools, the agent has not been given the browser. Post a comment saying so, set the issue to `blocked`, and stop. The fix is the agent's `browser.enabled` setting, not a workaround: do not start your own Chrome, and do not write Playwright scripts.
 
 ## Step 4 — Starting state, and when you need the human
 
@@ -91,18 +65,18 @@ The human may have set things up before handing over. The issue or the hand-off 
 Get the state you need in this order:
 
 1. **Write the stubs yourself** when the check is about how the page renders what the backend gives it. You already know from Step 1 which screen changed and which API calls it makes. No login and no seeded data are needed. See "Writing the stubs" below.
-2. **Reuse an existing campaign** that fits. Ask for one, or find it from the read-only database tools if you have them.
+2. **Reuse an existing record** that fits. Ask for one, or find it from the read-only database tools if you have them.
 3. **Create it through the application's API** when the data is cheap to create and the API is available to you.
 4. **Ask the human** to create it or perform the action, as below.
 
 A stubbed check never replaces an unstubbed one for the same change: stubs prove the page renders what it is given, not that the backend returns it. Do the backend half separately: call the real API, read the result back through a second API call, and use the read-only database tools for what the API does not show.
 
-Never write to the database directly and never touch production: the QA database is read-only to you, and the backends are UK non-prod.
+Never write to the database directly and never touch production: the QA database is read-only to you, and the backends are non-production.
 
 Ask instead of guessing when:
 
-- the page shows a login wall and stubbing the session is not available or does not get past it: the saved login is missing or expired, or the QA Chrome has been signed out
-- the flow needs data you cannot create or reuse, for example campaigns, strategies and tactics in Atlas
+- the page shows a login wall and stubbing the session is not available or does not get past it: the saved login is missing or expired
+- the flow needs data you cannot create or reuse, for example records that need several linked entities
 - the correct URL is not in the issue and not the default
 
 Create one `ask_user_questions` interaction with `answerMode: "text"`, `resolverPolicy: "human_only"` and `continuationPolicy: "wake_assignee"`. State exactly what to do and what to send back:
@@ -110,11 +84,11 @@ Create one `ask_user_questions` interaction with `answerMode: "text"`, `resolver
 > Sign in once so I can reuse the login: run `node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000` from the repo root, sign in in the window it opens, press Enter in the terminal, then reply "signed in".
 
 
-> Create a campaign with at least one strategy and two tactics, then reply with the URL of the campaign page.
+> Create a <record> with <the linked entities it needs>, then reply with the URL of its page.
 
 Then follow the waiting posture in the `paperclip` skill: confirm the interaction is saved and pending, set the issue to `in_review`, and exit. You are woken with the answer; resume at Step 5 with the URL they gave.
 
-Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. There is no login bypass to reach for: the Atlas e2e suite (`atlas-planner-e2e`) signs in through real Auth0, and its saved session is for the QA origin, not `localhost`. The saved login here is the equivalent: once the human has signed in at `localhost:3000` with `save-login.mjs`, every later isolated run starts signed in. An attached run keeps the login in the QA Chrome profile instead.
+Never type the human's credentials, never fetch the e2e service-account secret, and never read cookies, tokens or the saved login file. Once the human has signed in with `save-login.mjs`, every later isolated run starts signed in.
 
 ### Writing the stubs
 
