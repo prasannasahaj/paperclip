@@ -14,7 +14,6 @@ const ENABLED: PlaywrightBrowserConfig = {
   headed: false,
   images: false,
   storageStatePath: null,
-  cdpEndpoint: null,
   allowedOrigins: [],
   mockNetwork: true,
   initScripts: [],
@@ -37,7 +36,6 @@ describe("readPlaywrightBrowserConfig", () => {
       headed: false,
       images: false,
       storageStatePath: null,
-      cdpEndpoint: null,
       allowedOrigins: [],
       mockNetwork: true,
       initScripts: [],
@@ -52,7 +50,6 @@ describe("readPlaywrightBrowserConfig", () => {
         headed: true,
         images: true,
         storageStatePath: " /tmp/login.json ",
-        cdpEndpoint: " http://localhost:9222 ",
         allowedOrigins: ["http://localhost:3000", "", 7],
         mockNetwork: true,
         initScripts: [" /qa/session.js ", "", 3],
@@ -64,7 +61,6 @@ describe("readPlaywrightBrowserConfig", () => {
       headed: true,
       images: true,
       storageStatePath: "/tmp/login.json",
-      cdpEndpoint: "http://localhost:9222",
       allowedOrigins: ["http://localhost:3000"],
       mockNetwork: true,
       initScripts: ["/qa/session.js"],
@@ -144,23 +140,6 @@ describe("buildPlaywrightBrowserLaunch", () => {
     const result = launch({ ...ENABLED, storageStatePath });
     expect(result.loginRestored).toBe(true);
     expect(result.server.args[result.server.args.indexOf("--storage-state") + 1]).toBe(storageStatePath);
-  });
-
-  it("attaches to a running browser instead of starting an in-memory one", () => {
-    const result = launch({ ...ENABLED, cdpEndpoint: "http://localhost:9222" });
-    const { args } = result.server;
-    expect(args[args.indexOf("--cdp-endpoint") + 1]).toBe("http://localhost:9222");
-    expect(args).not.toContain("--isolated");
-    expect(args).not.toContain("--headless");
-    expect(result.cdpEndpoint).toBe("http://localhost:9222");
-  });
-
-  it("ignores a saved login when attaching because the running browser owns its logins", () => {
-    const storageStatePath = path.join(root, "login.json");
-    fs.writeFileSync(storageStatePath, JSON.stringify({ cookies: [], origins: [] }));
-    const result = launch({ ...ENABLED, storageStatePath, cdpEndpoint: "http://localhost:9222" });
-    expect(result.loginRestored).toBe(false);
-    expect(result.server.args).not.toContain("--storage-state");
   });
 
   it("restricts navigation when allowed origins are configured", () => {

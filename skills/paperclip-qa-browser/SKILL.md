@@ -73,9 +73,6 @@ Things the trial found:
 Your tools include the `browser_*` tools of the `Playwright browser` MCP server (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot` and others). Paperclip connects that browser to your run in one of two ways, set on the agent:
 
 - **Isolated (default):** a fresh, headless Chrome with the saved QA login restored. Nothing is left running after the run ends, and no other agent shares it.
-- **Attached (`browser.cdpEndpoint`):** the long-lived QA Chrome the human started. It keeps its own login and tabs, and other runs may share it. Open your own tab for the work and leave the others alone.
-
-The first line of the run log says which one you have.
 
 Work one action at a time and read each result before choosing the next:
 
@@ -112,9 +109,6 @@ Create one `ask_user_questions` interaction with `answerMode: "text"`, `resolver
 
 > Sign in once so I can reuse the login: run `node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000` from the repo root, sign in in the window it opens, press Enter in the terminal, then reply "signed in".
 
-When you are attached to the QA Chrome, the human signs in in that window instead, and you continue in the same browser without a saved login file:
-
-> The QA Chrome is on a login page. Sign in in that window, leave it open, then reply "signed in".
 
 > Create a campaign with at least one strategy and two tactics, then reply with the URL of the campaign page.
 
