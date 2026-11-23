@@ -25,7 +25,7 @@ QA agents verify finished work in a real browser through a Playwright MCP server
 | `allowedOrigins` | none | Origins the browser may request. Not a security boundary: redirects are not covered. |
 | `mockNetwork` | `true` | Give the agent the `browser_route` tool (Playwright MCP `--caps network`) so it can write stubs for the screen it is verifying. Set `false` to withhold it. |
 
-Remove the legacy `chrome: true` setting from the agent; the QA Verifier's ACP runs exposed no Chrome tools with it (run `f5f80d24`).
+Remove the legacy `chrome: true` setting from the agent; ACP runs exposed no Chrome tools with it.
 
 ## Save the QA login once
 
@@ -33,7 +33,7 @@ Remove the legacy `chrome: true` setting from the agent; the QA Verifier's ACP r
 node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000
 ```
 
-Sign in in the window that opens, then press Enter in the terminal. The file is written with mode `0600`. It holds session cookies and local storage for the QA account, so keep only QA logins in it. Run it again when the Auth0 session expires.
+Sign in in the window that opens, then press Enter in the terminal. The file is written with mode `0600`. It holds session cookies and local storage for the QA account, so keep only QA logins in it. Run it again when the session expires.
 
 ## Stub the network instead of signing in
 
@@ -48,7 +48,7 @@ Large applications need many setup steps before the screen under test: sign-in, 
 
 ## Handoff and test data
 
-The human can set state up first and hand over a URL. Setup must be saved in the backend; unsaved page state does not carry over. The agent reuses an existing campaign, creates data through the application API, or asks the human. The QA database is read-only to the agent and production is out of bounds.
+The human can set state up first and hand over a URL. Setup must be saved in the backend; unsaved page state does not carry over. The agent reuses an existing record, creates data through the application API, or asks the human. The QA database is read-only to the agent and production is out of bounds.
 
 ## Limits
 
