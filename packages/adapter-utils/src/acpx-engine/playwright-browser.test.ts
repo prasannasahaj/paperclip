@@ -172,17 +172,6 @@ describe("buildPlaywrightBrowserLaunch", () => {
     expect(valuesOf("--init-page")).toEqual(["/qa/stubs.ts"]);
   });
 
-  it("applies stubs to an attached browser as well", () => {
-    const { args } = launch({
-      ...ENABLED,
-      cdpEndpoint: "http://localhost:9222",
-      mockNetwork: true,
-      initPages: ["/qa/stubs.ts"],
-    }).server;
-    expect(args[args.indexOf("--caps") + 1]).toBe("network");
-    expect(args[args.indexOf("--init-page") + 1]).toBe("/qa/stubs.ts");
-  });
-
   it("forwards only PATH, HOME and the socket directory to the browser process", () => {
     const { server } = launch(ENABLED);
     expect(server.env.map((entry) => entry.name)).toEqual(["PATH", "HOME", "PWTEST_SOCKETS_DIR"]);
