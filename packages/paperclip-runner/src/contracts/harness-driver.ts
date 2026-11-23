@@ -1,4 +1,3 @@
-import type { ProviderFailure } from "./provider-failure.generated.js";
 import type { NativeRunRuntimeGrant } from "./runtime-context.js";
 import type { DurableRecoveryIdentity } from "./durable-recovery.js";
 import type {
@@ -574,7 +573,6 @@ export interface HarnessSessionRecoveryResult {
    * the checkpoint had no turn or runtime request in flight. */
   resumeStateUnavailable?: true;
   runnerExitConfirmed?: true;
-  providerFailure?: ProviderFailure;
 }
 
 /** Reads the closed class of an authenticated runner command failure, or of a
