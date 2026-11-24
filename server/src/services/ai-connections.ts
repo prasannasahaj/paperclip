@@ -24,6 +24,7 @@ import {
 } from "@paperclipai/db";
 import {
   AI_CONNECTION_CAPABILITIES,
+  decisionBaseUrlForConnection,
   decisionProviderForConnection,
   aiConnectionCatalogSlug,
   getAppStoreDefinition,
@@ -453,7 +454,9 @@ export function aiConnectionService(db: Db) {
       )).limit(1);
       if (!install) throw forbidden("Connection is not permitted for this agent");
     }
-    return { ...row, provider };
+    const keyless = provider === "ollama" && metadata.success && metadata.data.routing?.auth === "none";
+    const baseUrl = provider === "ollama" && metadata.success ? decisionBaseUrlForConnection(metadata.data) : null;
+    return { ...row, provider, keyless, baseUrl };
   }
   /**
    * A native run's image tool reuses the exact AI connection the run was

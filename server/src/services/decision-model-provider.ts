@@ -10,6 +10,8 @@ export interface DecisionProviderReceipt {
   pricingProvenance: { source: "provider_reported" | "rate_card" | "unknown"; version?: string; evidence?: string; inputCentsPerMillion?: string };
 }
 export interface DecisionProviderOutcome { noProviderWork?: boolean; answers?: Record<string, DecisionAnswer>; errorCode?: string; receipt: DecisionProviderReceipt }
+const OLLAMA_PRICING_VERSION = "ollama-local-compute";
+const SYSTEMONE_PATH = "/systemone";
 const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const tokenCount = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= 2_147_483_647 ? v : null;
 function rejectedResponseData(error: unknown) {
@@ -30,6 +32,10 @@ export function decisionReceipt(provider: DecisionProvider, result: unknown): De
   const inputTokens = tokenCount(usage.inputTokens), outputTokens = tokenCount(usage.outputTokens);
   const reported = record(record(metadata.openrouter).usage).cost;
   const base = { inputTokens, outputTokens, providerRequestId: typeof response.id === "string" ? response.id.slice(0, 250) : typeof headers["x-request-id"] === "string" ? headers["x-request-id"].slice(0, 250) : null };
+  if (provider === "ollama") {
+    return { ...base, costCents: "0.0000000", costStatus: "estimated",
+      pricingProvenance: { source: "rate_card", version: OLLAMA_PRICING_VERSION, inputCentsPerMillion: "0.0000000" } };
+  }
   if (provider === "openrouter" && typeof reported === "number" && Number.isFinite(reported) && reported >= 0) {
     return { ...base, costCents: unitsToCents(centsToUnits(reported * 100)), costStatus: "reported", pricingProvenance: { source: "provider_reported" } };
   }
@@ -41,12 +47,16 @@ export function decisionReceipt(provider: DecisionProvider, result: unknown): De
   return { ...base, costCents: null, costStatus: "unpriced", pricingProvenance: { source: "unknown" } };
 }
 export async function runDecisionProvider(input: {
-  provider: DecisionProvider; model: string; apiKey: string; request: DecisionRequest; signal: AbortSignal;
+  provider: DecisionProvider; model: string; apiKey: string; baseUrl?: string | null; request: DecisionRequest; signal: AbortSignal;
 }, options: { fetch?: typeof fetch } = {}): Promise<DecisionProviderOutcome> {
+  let receipt = decisionReceipt(input.provider, null);
+  if (input.provider === "ollama" && !input.baseUrl) return { errorCode: "provider_failed", noProviderWork: true, receipt };
   const native = input.provider === "openai"
     ? createOpenAI({ apiKey: input.apiKey, fetch: options.fetch }).decisionModel(input.model)
-    : createOpenRouter({ apiKey: input.apiKey, fetch: options.fetch, headers: OPENROUTER_ATTRIBUTION_HEADERS }).evaluationModel(input.model);
-  let receipt = decisionReceipt(input.provider, null);
+    : input.provider === "ollama"
+      ? createOpenRouter({ apiKey: "ollama", decisionsBaseURL: input.baseUrl!,
+        fetch: (url, init) => (options.fetch ?? fetch)(String(url).replace(/\/decisions$/, SYSTEMONE_PATH), init) }).evaluationModel(input.model)
+      : createOpenRouter({ apiKey: input.apiKey, fetch: options.fetch, headers: OPENROUTER_ATTRIBUTION_HEADERS }).evaluationModel(input.model);
   // Capture only accounting metadata before SDK answer validation/refusal errors.
   const model: Exclude<Experimental_DecisionModel, string> = {
     specificationVersion: "v4", provider: native.provider, modelId: native.modelId, supportedQuestionTypes: native.supportedQuestionTypes,
@@ -83,6 +93,7 @@ export async function runDecisionProvider(input: {
     const refused = name.includes("Refusal") || record(data.error).type === "refusal" || rawAnswers.some(answer => record(answer).type === "refusal");
     const errorCode = input.signal.aborted ? "timeout" : refused ? "refused"
       : status === 401 || status === 403 ? "provider_auth_failed" : status === 429 ? "provider_rate_limited" : "provider_failed";
+    if (input.provider === "ollama") return { errorCode, receipt, noProviderWork: true };
     // An explicit authentication/validation rejection occurs before model work.
     // Server errors and network failures remain unresolved: their charge is unknown.
     const noProviderWork = receipt.costStatus === "unpriced" && [400, 401, 403, 404, 422, 429].includes(Number(status));

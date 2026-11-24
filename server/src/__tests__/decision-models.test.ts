@@ -582,6 +582,45 @@ describe("company decision service", () => {
     expect((await db.select().from(budgetReservations).where(eq(budgetReservations.companyId, f.companyId)))[0].state).toBe("released");
     expect((await db.select().from(costEvents).where(eq(costEvents.companyId, f.companyId)))[0].costCents).toBe(0);
   });
+  async function localD3Fixture() {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Local D3 tests", issuePrefix: `LD${++sequence}` });
+    await db.insert(companyMemberships).values({ companyId, principalId: "alice", principalType: "user", status: "active", membershipRole: "owner" });
+    const binding = await aiConnectionService(db).save(companyId, "alice", { provider: "openai", method: "api_key", name: "Local D3", ownership: "shared",
+      allAgents: true, agentIds: [], routing: { kind: "local", protocol: "chat", auth: "none", baseUrl: "http://localhost:11434/v1", models: [] } }, "");
+    const provider = vi.fn();
+    const service = decisionModelService(db, { provider });
+    await service.configure(companyId, "alice", { ...binding, enabled: true, allowBackground: true });
+    return { companyId, binding, provider, service };
+  }
+  it("runs a background decision on a keyless local D3 connection and settles it at zero cost", async () => {
+    const f = await localD3Fixture();
+    expect(await f.service.settings(f.companyId)).toMatchObject({ provider: "ollama", model: "d3:9b" });
+    expect(await f.service.choices(f.companyId, "alice")).toEqual([expect.objectContaining({ id: f.binding.connectionId, decisionModel: "d3:9b" })]);
+    f.provider.mockResolvedValue({ answers: { billing: { type: "boolean", probability: 0.99 } },
+      receipt: decisionReceipt("ollama", { usage: { inputTokens: 10, outputTokens: 0 } }) });
+    const result = await f.service.decide({ companyId: f.companyId, actor: { type: "system" }, feature: backgroundFeature }, DECISION_TEST_REQUEST);
+    expect(result.status).toBe("succeeded");
+    expect(f.provider).toHaveBeenCalledOnce();
+    expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({ provider: "ollama", model: "d3:9b", apiKey: "", baseUrl: "http://localhost:11434/v1" }));
+    const events = await db.select().from(costEvents).where(eq(costEvents.companyId, f.companyId));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "ollama", biller: "ollama", billingType: "fixed", costStatus: "estimated", costCents: 0 });
+    expect((await db.select().from(budgetReservations).where(eq(budgetReservations.companyId, f.companyId)))[0].state).toBe("settled");
+  });
+  it("releases the reservation when local D3 fails", async () => {
+    const f = await localD3Fixture();
+    f.provider.mockResolvedValue({ errorCode: "provider_failed", noProviderWork: true, receipt: decisionReceipt("ollama", null) });
+    const result = await f.service.decide({ companyId: f.companyId, actor: { type: "system" }, feature: backgroundFeature }, DECISION_TEST_REQUEST);
+    expect(result.status).toBe("failed");
+    expect((await db.select().from(budgetReservations).where(eq(budgetReservations.companyId, f.companyId)))[0].state).toBe("released");
+    expect((await db.select().from(costEvents).where(eq(costEvents.companyId, f.companyId)))[0]).toMatchObject({ provider: "ollama", billingType: "fixed", costStatus: "estimated" });
+  });
+  it("never passes a base URL to keyed providers", async () => {
+    const f = await fixture();
+    await f.service.decide({ companyId: f.companyId, actor: { type: "system" }, feature: backgroundFeature }, DECISION_TEST_REQUEST);
+    expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({ provider: "openai", apiKey: "fixture-key", baseUrl: null }));
+  });
   it("enforces manager-only configuration and tests, company isolation, and fixed sample execution", async () => {
     const f = await fixture(), other = await fixture();
     const app = express(); app.use(express.json());
