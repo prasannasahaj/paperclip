@@ -142,6 +142,11 @@ async function assertAgentHasActiveRun(db: Db, companyId: string, actor: Authori
   if (run?.status !== "running") throw forbidden("An active run is required");
 }
 
+function assertAgentAnsweredEveryQuestion(decisionRequest: DecisionRequest, agentAnswers: TaskTriageAgentAnswers = {}) {
+  const unanswered = Object.keys(decisionRequest.questions).filter(question => agentAnswers[question as TaskTriageQuestion] === undefined);
+  if (unanswered.length > 0) throw badRequest(`Send your own answer for every question so D3's agreement record can grow. Missing agentAnswers: ${unanswered.join(", ")}`);
+}
+
 async function shadowLogEntity(db: Db, companyId: string, issueId: string | undefined) {
   const [issue] = issueId ? await db.select({ id: issues.id }).from(issues)
     .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))) : [];
@@ -152,8 +157,10 @@ export function taskTriageService(db: Db, decisions: ReturnType<typeof decisionM
   async function triage(caller: TaskTriageCaller, input: TaskTriageRequest): Promise<TaskTriageResult> {
     await assertAgentHasActiveRun(db, caller.companyId, caller.actor);
     const owners = await ownerChoices(db, caller.companyId, input);
+    const decisionRequest = taskTriageDecisionRequest(input, owners);
+    if (caller.activityActor.actorType === "agent") assertAgentAnsweredEveryQuestion(decisionRequest, input.agentAnswers);
     const result = await decisions.decide({ companyId: caller.companyId, actor: caller.actor, feature: taskTriageFeature, issueId: input.issueId },
-      taskTriageDecisionRequest(input, owners));
+      decisionRequest);
     if (result.status !== "succeeded") return result;
     const verdicts = triageVerdicts(result.answers, owners);
     const agentAnswers: TaskTriageAgentAnswers = input.agentAnswers ?? {};

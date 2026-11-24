@@ -125,6 +125,26 @@ describe("task triage decision route", () => {
     expect(JSON.stringify(entry)).not.toContain("SECRET");
   });
 
+  it("makes an agent send its own answer to every question asked, before D3 is called", async () => {
+    const f = await fixture();
+    const complete = { work_type: "implementation", touches_gated_area: false, size: "small", needs_split: false, capability_tier: "routine" } as const;
+    const app = appAs(f.agent);
+    const none = await request(app).post(f.url).send({ issueId: f.issueId, task: "Fix it" });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toContain("work_type");
+    const { size: _size, ...withoutSize } = complete;
+    const partial = await request(app).post(f.url).send({ issueId: f.issueId, task: "Fix it", agentAnswers: withoutSize });
+    expect(partial.status).toBe(400);
+    expect(partial.body.error).toContain("size");
+    expect(partial.body.error).not.toContain("work_type");
+    const ownerMissing = await request(app).post(f.url).send({ issueId: f.issueId, task: "Fix it", chooseOwner: true, agentAnswers: complete });
+    expect(ownerMissing.status).toBe(400);
+    expect(ownerMissing.body.error).toContain("owner");
+    expect(providerCall).not.toHaveBeenCalled();
+    expect(await triageEntries(f.companyId)).toHaveLength(0);
+    expect((await request(app).post(f.url).send({ issueId: f.issueId, task: "Fix it", agentAnswers: complete })).status).toBe(200);
+  });
+
   it.each([
     { score: 0.0033, agentSize: "small", verdict: "small", agrees: true },
     { score: 1.4, agentSize: "medium", verdict: "medium", agrees: true },
@@ -152,12 +172,13 @@ describe("task triage decision route", () => {
   it("passes unavailable and failed results through with 200 and no shadow entry", async () => {
     const f = await fixture();
     const app = appAs(f.agent);
+    const agentAnswers = { work_type: "implementation", touches_gated_area: false, size: "small", needs_split: false, capability_tier: "routine" } as const;
     providerCall.mockResolvedValueOnce({ errorCode: "timeout", receipt: decisionReceipt("openai", null) });
-    const failed = await request(app).post(f.url).send({ task: "Fix it" });
+    const failed = await request(app).post(f.url).send({ task: "Fix it", agentAnswers });
     expect(failed.status).toBe(200);
     expect(failed.body).toMatchObject({ status: "failed", errorCode: "timeout" });
     await f.service.configure(f.companyId, "alice", { ...f.binding, enabled: false });
-    const unavailable = await request(app).post(f.url).send({ task: "Fix it" });
+    const unavailable = await request(app).post(f.url).send({ task: "Fix it", agentAnswers });
     expect(unavailable.status).toBe(200);
     expect(unavailable.body).toEqual({ status: "unavailable", reason: "disabled" });
     expect(await triageEntries(f.companyId)).toHaveLength(0);

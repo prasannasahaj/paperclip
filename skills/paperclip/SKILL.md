@@ -786,7 +786,7 @@ When the company has a decision model, call `POST /api/companies/:companyId/deci
     "needs_split": false, "capability_tier": "standard", "owner": "<agent id>" } }
 ```
 
-`work_type` is one of `investigation`, `data_analysis`, `product_discovery`, `requirements`, `implementation`, `review_and_testing`, `operations`, `communication`. `capability_tier` is `routine`, `standard` or `hard`; map it to a model and effort yourself. `chooseOwner` asks which working agent should own the task (narrow it with `ownerCandidateIds`); add `packChoices` and `agentAnswers.pack` to ask which pack fits. Always send every answer you formed: they build the agreement record that decides when D3 is trusted.
+`work_type` is one of `investigation`, `data_analysis`, `product_discovery`, `requirements`, `implementation`, `review_and_testing`, `operations`, `communication`. `capability_tier` is `routine`, `standard` or `hard`; map it to a model and effort yourself. `chooseOwner` asks which working agent should own the task (narrow it with `ownerCandidateIds`); add `packChoices` and `agentAnswers.pack` to ask which pack fits. Send an answer for every question the server asks (`work_type`, `touches_gated_area`, `size`, `needs_split`, `capability_tier`, plus `pack` and `owner` when you ask for them). The server returns 400 and names the missing ones, because the agreement record is what decides when D3 is trusted.
 
 Act on `decisions.<question>.value`. When `use` is `agent`, D3 was not confident or not yet accurate enough and the value is your own answer; if it is `null`, decide yourself. A confident D3 yes on `touches_gated_area` stands even over your no; a D3 no never overrides your yes. If the result is `unavailable` or `failed`, continue on your own judgement.
 
