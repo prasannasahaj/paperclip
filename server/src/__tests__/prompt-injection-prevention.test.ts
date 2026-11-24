@@ -272,7 +272,7 @@ describe("prompt injection service", () => {
   });
   it("never offers a keyless local connection for prompt injection checks", async () => {
     const f = await fixture();
-    const routing = { kind: "local", protocol: "chat", auth: "none", baseUrl: "http://localhost:11434/v1", models: [] } as const;
+    const routing = { kind: "local" as const, protocol: "chat" as const, auth: "none" as const, baseUrl: "http://localhost:11434/v1", models: [] };
     const local = await f.connections.save(f.companyId, "alice", { provider: "openai", method: "api_key", ownership: "shared", name: "Local Ollama", allAgents: true, agentIds: [], routing }, "");
     await expect(f.connections.selectPromptInjectionPrevention({ companyId: f.companyId, userId: "alice", connectionId: local.connectionId, grantId: local.grantId }))
       .rejects.toMatchObject({ details: { code: "incompatible_connection" } });
