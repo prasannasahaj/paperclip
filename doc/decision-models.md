@@ -1,10 +1,10 @@
 # Company decision models
 
-Decision model setup remains available in Company Settings → General when fast responses are off. Enabling **Experimental fast responses** in Company Settings → Experimental moves model setup to the Connections page. Company Settings → Connections → **Decision model** configures one shared API connection for optional Paperclip features. New companies remain unconfigured. A connection manager selects or adds an OpenAI or OpenRouter connection, saves, and can run a small billed setup test. Test answers appear only in that session; request metadata and charges appear under Activity → Costs → Decisions.
+Decision model setup remains available in Company Settings → General when fast responses are off. Enabling **Experimental fast responses** in Company Settings → Experimental moves model setup to the Connections page. Company Settings → Connections → **Decision model** configures one shared API connection for optional Paperclip features. New companies remain unconfigured. A connection manager selects or adds an OpenAI, OpenRouter, or local Ollama connection, saves, and can run a small setup test that is billed for OpenAI and OpenRouter. Test answers appear only in that session; request metadata and charges appear under Activity → Costs → Decisions.
 
 **Allow company-sponsored background decisions defaults on.** Saving authorizes internal background features to charge the selected connection without a responsible human. An explicit off setting survives later edits, including changing the connection or omitting the field from an update. Deleting the selected connection or grant preserves the setting and blocks calls until a valid replacement is selected. Disabling decisions prevents new calls. It does not cancel or erase calls already dispatched.
 
-V1 supports native OpenAI Decisions (`gpt-6-luna`) and OpenRouter Decisions (`typesafe/jev-1.13`). It accepts company-owned API keys only. Personal grants, subscription credentials, custom endpoints, fallback chains, images, and public agent/plugin execution tools are outside this version. Decision compatibility is separate from CLI-adapter compatibility.
+V1 supports native OpenAI Decisions (`gpt-6-luna`), OpenRouter Decisions (`typesafe/jev-1.13`), and Ollama (local) Decisions (`d3:9b`) through a keyless loopback connection. OpenAI and OpenRouter accept company-owned API keys only. Personal grants, subscription credentials, non-loopback custom endpoints, fallback chains, images, and public agent/plugin execution tools are outside this version. Decision compatibility is separate from CLI-adapter compatibility.
 
 ## Internal service
 
@@ -34,7 +34,11 @@ The setup test is the only product caller in this release. Future callers must s
 
 Human calls use the authenticated user and retain the connection's audience checks. Agent calls reread the active persisted run and its current responsible user, check that user's current membership/resource access, and require an applicable agent/company connection installation. Task and project references must belong to that run/company. Attribution snapshots the effective identity at dispatch. Explicit internal system contexts additionally require a feature registered with `{ background: true }` and company sponsorship. A denied user/agent call cannot fall back to system context.
 
-Credentials are resolved through the existing secret service immediately before admission, with the actual user/agent/system audit attribution. Authorization, connection/configuration revisions, current run identity, and budgets are rechecked before dispatch. Requests allow 1–20 named questions, text/JSON state, and at most 32 KB serialized request data. Execution is limited to 30 seconds and SDK paid retries are disabled.
+Credentials are resolved through the existing secret service immediately before admission, with the actual user/agent/system audit attribution. Keyless local connections have no credential, so nothing is resolved for them. Authorization, connection/configuration revisions, current run identity, and budgets are rechecked before dispatch. Requests allow 1–20 named questions, text/JSON state, and at most 32 KB serialized request data. Execution is limited to 30 seconds and SDK paid retries are disabled.
+
+### Known limitation: local decision endpoints
+
+When a company uses a local decision connection, the Paperclip server itself sends requests to that loopback endpoint. Anyone who can manage the company's connections can point such a connection at any localhost port, and the server then makes blind POSTs to that port. The feature is intended for `local_trusted`, single-machine use. It must be gated before hosted or multi-company use.
 
 ## Accounting and privacy
 
@@ -44,7 +48,7 @@ Cost events have `usageKind: decision` and may have no agent. Agentless reportin
 
 Paid admission and settlement use independent operation transactions. Admission keeps shared manual-control fences and best-effort budget observations; concurrent starts can exceed the same observed balance. Settlement does not acquire a company writer mutex. Company and applicable agent/project budgets include held reservations and observed spend. Reservations use the largest configured applicable reservation amount. Settlement is idempotent. Explicit provider authentication/validation/rate-limit rejection releases the hold when no model work occurred. Uncertain dispatches, timeouts, and unknown prices remain unpriced with the reservation held. Startup and deadline-driven accounting recovery marks stale invocations interrupted without resubmitting them. Late authoritative receipts can correct provisional interrupted accounting without another provider call. Use the existing audited cost adjustment workflow to resolve an otherwise unknown charge and release its hold, including a verified zero charge when appropriate.
 
-OpenRouter-reported USD costs are converted to fractional cents. OpenAI uses a dedicated, versioned Decisions rate snapshot: $0.10 per million input tokens for the bounded short requests at the native default endpoint. No chat-model price is substituted. Missing usage or an unsupported rate stays unknown; it is never displayed as a free request. The ledger retains seven decimal places in cents. Pricing provenance accompanies the cost event and remains available to accounting corrections.
+OpenRouter-reported USD costs are converted to fractional cents. OpenAI uses a dedicated, versioned Decisions rate snapshot: $0.10 per million input tokens for the bounded short requests at the native default endpoint. No chat-model price is substituted. Local Ollama decisions are recorded as estimated zero-cost local compute (`ollama-local-compute`), including failed requests. Missing usage or an unsupported rate stays unknown; it is never displayed as a free request. The ledger retains seven decimal places in cents. Pricing provenance accompanies the cost event and remains available to accounting corrections.
 
 History follows company cost visibility and rechecks task access before returning task/run links. It shows the latest 100 requests in the selected date window. Input/output contents remain absent after refresh.
 
@@ -64,7 +68,7 @@ There is no general HTTP decision execution endpoint.
 
 ## Provider dependencies and verification
 
-The experimental Vercel contract is hidden behind Paperclip-owned types. Dependencies are pinned to `ai@7.0.130`, `@ai-sdk/openai@4.0.86`, and `@openrouter/ai-sdk-provider@3.1.0`. That OpenRouter release calls its compatible model factory `evaluationModel`; the wrapper adapts it to the current Decisions interface. Upgrade these together and rerun native wire-format tests.
+The experimental Vercel contract is hidden behind Paperclip-owned types. Dependencies are pinned to `ai@7.0.130`, `@ai-sdk/openai@4.0.86`, and `@openrouter/ai-sdk-provider@3.1.0`. That OpenRouter release calls its compatible model factory `evaluationModel`; the wrapper adapts it to the current Decisions interface. Upgrade these together and rerun native wire-format tests. Ollama D3 reuses the OpenRouter evaluation model with the `/decisions` request path rewritten to `/systemone`; Ollama upgrades must rerun the provider contract tests.
 
 CI owns lockfile updates. Before a direct Docker build of a feature checkout whose dependency manifests changed, refresh the local build context with `pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile`. Do not commit that generated lockfile; the hosted Docker workflow performs the same preparation and the lockfile bot updates master.
 

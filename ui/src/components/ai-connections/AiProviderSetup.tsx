@@ -75,6 +75,7 @@ export function AiProviderSetup({
   environmentId,
   initialProvider,
   initialProtocol,
+  initialAuth,
   providerLabel,
   advancedOnly = false,
   submitLabel,
@@ -87,6 +88,7 @@ export function AiProviderSetup({
   environmentId?: string;
   initialProvider?: ProviderChoice;
   initialProtocol?: AiProviderRouting["protocol"];
+  initialAuth?: AiProviderRouting["auth"];
   providerLabel?: string;
   advancedOnly?: boolean;
   submitLabel?: string;
@@ -115,7 +117,7 @@ export function AiProviderSetup({
     reconnect?.routing?.protocol ?? initialProtocol ?? "responses",
   );
   const [auth, setAuth] = useState<AiProviderRouting["auth"]>(
-    reconnect?.routing?.auth ?? "bearer",
+    reconnect?.routing?.auth ?? initialAuth ?? "bearer",
   );
   const [baseUrl, setBaseUrl] = useState(reconnect?.routing?.baseUrl ?? "");
   const [region, setRegion] = useState(

@@ -270,6 +270,16 @@ describe("prompt injection service", () => {
     expect(await f.service.classify(f.context, "sample")).toMatchObject({ reason: "connection_unavailable" });
     expect(f.provider).not.toHaveBeenCalled();
   });
+  it("never offers a keyless local connection for prompt injection checks", async () => {
+    const f = await fixture();
+    const routing = { kind: "local", protocol: "chat", auth: "none", baseUrl: "http://localhost:11434/v1", models: [] } as const;
+    const local = await f.connections.save(f.companyId, "alice", { provider: "openai", method: "api_key", ownership: "shared", name: "Local Ollama", allAgents: true, agentIds: [], routing }, "");
+    await expect(f.connections.selectPromptInjectionPrevention({ companyId: f.companyId, userId: "alice", connectionId: local.connectionId, grantId: local.grantId }))
+      .rejects.toMatchObject({ details: { code: "incompatible_connection" } });
+    const offered = (await f.service.choices(f.companyId, "alice")).map(choice => choice.id);
+    expect(offered).toContain(f.binding.connectionId);
+    expect(offered).not.toContain(local.connectionId);
+  });
   it("does not sponsor denied identified users and enforces agent installation", async () => {
     const f = await fixture();
     await db.insert(connectionGrantMembers).values({ companyId: f.companyId, grantId: f.binding.grantId, subjectType: "user", subjectId: "alice" });
