@@ -13,6 +13,7 @@ const issueId = "11111111-1111-4111-8111-111111111111";
 const companyId = "22222222-2222-4222-8222-222222222222";
 const ownerAgentId = "33333333-3333-4333-8333-333333333333";
 const peerAgentId = "44444444-4444-4444-8444-444444444444";
+const nextStageAgentId = "66666666-6666-4666-8666-666666666666";
 const ownerRunId = "55555555-5555-4555-8555-555555555555";
 const recoveryActionId = "77777777-7777-4777-8777-777777777777";
 
@@ -3260,15 +3261,28 @@ describe("agent issue mutation checkout ownership", () => {
         expect(mockIssueService.update).not.toHaveBeenCalled();
       });
 
-      it("keeps refusing an intermediate approval that would hand the task to the next participant", async () => {
-        mockIssueService.getById.mockResolvedValue(reviewIssue([finalStage, laterStage]));
+      it("records an intermediate approval and hands the task to the next stage's participant", async () => {
+        const issue = makeIssue({ ...reviewIssue([finalStage]),
+          executionPolicy: { mode: "normal", commentRequired: true, stages: [
+            reviewStage(finalStage),
+            { id: laterStage, type: "approval", approvalsNeeded: 1,
+              participants: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbf", type: "agent", agentId: nextStageAgentId, userId: null }] },
+          ] } });
+        mockIssueService.getById.mockResolvedValue(issue);
+        mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({ ...issue, ...patch }));
+        mockHeartbeatService.cancelRun.mockResolvedValue({ id: ownerRunId, status: "cancelled" });
 
-        const res = await request(createApp(runActor())).patch(`/api/issues/${issueId}`)
+        const res = await request(createApp(runActor(), createRunContextDb({}, ownerAgentId, ownerRunId, [], true))).patch(`/api/issues/${issueId}`)
           .send({ status: "done", comment: "Approved." });
 
-        expect(res.status, JSON.stringify(res.body)).toBe(409);
-        expect(res.body.details).toMatchObject({ code: "native_run_status_reported_by_finish", requestedStatus: "done" });
-        expect(mockIssueService.update).not.toHaveBeenCalled();
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        const patch = mockIssueService.update.mock.calls[0]?.[1] as Record<string, any>;
+        expect(patch.status).not.toBe("done");
+        expect(patch.assigneeAgentId).toBe(nextStageAgentId);
+        expect(patch.executionState).toMatchObject({
+          status: "pending", currentStageId: laterStage, currentStageType: "approval",
+          currentParticipant: { type: "agent", agentId: nextStageAgentId }, completedStageIds: [finalStage],
+        });
       });
 
       it("keeps refusing the approval when this run is not the active participant", async () => {

@@ -15423,15 +15423,16 @@ export function issueRoutes(
       Object.assign(updateFields, transition.patch);
       let deferredNativeStageApproval = false;
       if (nativeStageApproval === "defer_final_status") {
-        // Only the final stage's approval is deferred. Anything else this
-        // request would do (an intermediate approval that hands the task to the
-        // next participant, or no decision at all) keeps the ordinary refusal.
-        const finalApproval = transition.decision?.outcome === "approved" && updateFields.status === "done" &&
-          (transition.patch.assigneeAgentId === undefined || transition.patch.assigneeAgentId === existing.assigneeAgentId) &&
-          transition.patch.assigneeUserId === undefined;
-        if (!finalApproval) throw nativeRunStatusReportedByFinish(req.body.status);
-        delete updateFields.status;
-        deferredNativeStageApproval = true;
+        const approvedStage = transition.decision?.outcome === "approved";
+        const handsTaskToNextParticipant =
+          (transition.patch.assigneeAgentId !== undefined && transition.patch.assigneeAgentId !== existing.assigneeAgentId) ||
+          transition.patch.assigneeUserId !== undefined;
+        if (!approvedStage) throw nativeRunStatusReportedByFinish(req.body.status);
+        if (!handsTaskToNextParticipant) {
+          if (updateFields.status !== "done") throw nativeRunStatusReportedByFinish(req.body.status);
+          delete updateFields.status;
+          deferredNativeStageApproval = true;
+        }
       }
 
       const nextStatus = updateFields.status ?? existing.status;
