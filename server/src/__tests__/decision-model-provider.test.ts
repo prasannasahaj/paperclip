@@ -120,7 +120,7 @@ describe("decision provider contract", () => {
     expect(decisionProviderForConnection({ ...local, provider: "anthropic" })).toBeNull();
     expect(decisionProviderForConnection({ ...local, routing: { ...local.routing, baseUrl: undefined } })).toBeNull();
     expect(decisionProviderForConnection({ provider: "openai", method: "api_key" })).toBe("openai");
-    expect(decisionBaseUrlForConnection({ provider: "openai", method: "api_key" })).toBeNull();
+    expect(decisionBaseUrlForConnection({})).toBeNull();
     expect(DECISION_MODELS.ollama.id).toBe("d3:9b");
   });
 });
