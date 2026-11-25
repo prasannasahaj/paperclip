@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { Db } from "@paperclipai/db";
 
 import {
+  NATIVE_COMPLETION_CONTRACT_SCHEMA,
+  NATIVE_COMPLETION_POLICY_VERSION,
+  ensureNativeCompletionContract,
+  nativeCompletionContractSha256,
   buildNativeCompletionContract,
   buildNativeCompletionContractSources,
   nativeCompletionRequestsWithSources,
@@ -19,6 +24,24 @@ describe("buildNativeCompletionContract", () => {
     expect(contract.objective).toContain("merged");
     expect(contract.objective).toContain("register");
     expect(contract.objective).toContain("original task");
+  });
+
+  it("states delivery obligations for a merge request on any git host", () => {
+    const { objective } = buildNativeCompletionContract(
+      { title: "Open the final MR", description: "Open the MR for Prasanna." },
+    );
+    expect(objective).toMatch(/pull or merge request/);
+    expect(objective).not.toMatch(/\bPR\b/);
+  });
+
+  it("lets the agent hand off to a named person who merges, keeping the task in review with a scheduled check", () => {
+    const { objective } = buildNativeCompletionContract(
+      { title: "Open the final MR", description: "Open the MR for Prasanna." },
+    );
+    expect(objective).toMatch(/names a person who merges it/);
+    expect(objective).toMatch(/pipeline is green/);
+    expect(objective).toMatch(/in review with a scheduled check/);
+    expect(objective).toMatch(/until the request is verified merged/);
   });
 
   it("scopes standing-chat criteria to the response while preserving every current request and source", () => {
@@ -153,7 +176,7 @@ describe("buildNativeCompletionContract", () => {
     expect(contract.objective).toContain("Clarification is not approval");
     expect(JSON.stringify(contract)).not.toContain(brief);
     expect(JSON.stringify(contract).split("Use TypeScript.")).toHaveLength(2);
-    expect(JSON.stringify(contract).length).toBeLessThan(900);
+    expect(JSON.stringify(contract).length).toBeLessThan(1200);
   });
 
   it("keeps the instruction prefix identical as follow-up comments change", () => {
@@ -217,6 +240,63 @@ describe("buildNativeCompletionContract", () => {
     expect(requests[0]).toContain(`all ${count} accepted comments in order`);
     expect(requests[0]).toContain("metadata alone is not its content");
     expect(requests[0]).not.toContain("Only an inline prefix");
+  });
+});
+
+describe("ensureNativeCompletionContract across a release that changes the objective text", () => {
+  const issue = { id: "issue-1", title: "Open the final MR", description: "Open the MR for Prasanna." };
+  const previousReleaseObjective = `${issue.title} Preserve the original task's delivery obligations on follow-ups. For implementation work delivered by PR, register the PR as a pull_request work product and cite it in artifacts. Keep the task active through CI and review until the PR is verified merged; a local commit or opened PR is not delivery. Review-only requests retain their stated scope.`;
+
+  function contractStore(rows: Array<Record<string, unknown>>) {
+    const inserted: Array<Record<string, unknown>> = [];
+    const tx = {
+      execute: () => Promise.resolve([]),
+      select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: () => ({
+        then: (resolve: (value: unknown[]) => unknown) => Promise.resolve(resolve(rows.slice(-1))),
+      }) }) }) }) }),
+      insert: () => ({ values: (value: Record<string, unknown>) => {
+        const row = { id: `contract-${rows.length + 1}`, ...value };
+        inserted.push(row);
+        rows.push(row);
+        return { returning: () => Promise.resolve([row]) };
+      } }),
+    };
+    return { inserted, db: { transaction: (run: (tx: unknown) => unknown) => run(tx) } as unknown as Db };
+  }
+
+  function persistedByPreviousRelease() {
+    const policy = resolveNativeCompletionPolicy({ reviewPolicy: null });
+    const contractJson = { revision: "1", objective: previousReleaseObjective, criteria: [{ id: "objective", requirement: issue.description }] };
+    return {
+      id: "contract-1",
+      revision: 1,
+      contractJson,
+      canonicalSha256: nativeCompletionContractSha256({
+        schemaVersion: NATIVE_COMPLETION_CONTRACT_SCHEMA,
+        policyVersion: NATIVE_COMPLETION_POLICY_VERSION,
+        ...policy,
+        contractJson,
+      }),
+    };
+  }
+
+  it("supersedes the contract saved by the previous release with the next revision and keeps the old row", async () => {
+    const rows = [persistedByPreviousRelease()];
+    const store = contractStore(rows);
+
+    const { row } = await ensureNativeCompletionContract({ db: store.db, companyId: "company", issue, actorId: "agent" });
+
+    expect(row).toMatchObject({ revision: 2, supersedesContractId: "contract-1" });
+    expect(rows[0]).toEqual(persistedByPreviousRelease());
+  });
+
+  it("reuses the superseding revision on the following wake", async () => {
+    const store = contractStore([persistedByPreviousRelease()]);
+    await ensureNativeCompletionContract({ db: store.db, companyId: "company", issue, actorId: "agent" });
+
+    await ensureNativeCompletionContract({ db: store.db, companyId: "company", issue, actorId: "agent" });
+
+    expect(store.inserted).toHaveLength(1);
   });
 });
 

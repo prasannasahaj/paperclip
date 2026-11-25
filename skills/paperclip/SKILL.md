@@ -214,6 +214,20 @@ If an important file intentionally remains in the project or execution workspace
 For technical upload instructions, read `references/artifacts.md`, except for
 the routine server-verified external-chat handoff described above.
 
+### Closing work that ends in a merge request on any git host
+
+A `done` result is accepted only when each criterion cites a durable Paperclip record. A raw merge request URL, or the output of `glab` or `gh`, is not durable evidence, and the server rejects it as `unsupported_evidence_reference`. Paperclip does not require a GitHub pull request: a GitLab merge request closes the task the same way.
+
+1. Check the merge request state yourself with `glab` or `gh`. Do not ask the board to confirm what you can read.
+2. Update the merge request's work product with `PATCH /api/work-products/{workProductId}` and `{ "status": "merged" }` once the host reports it merged.
+3. Cite it in the completion claim as `work_product:<work-product-id>`.
+4. If a board user states in a comment that the merge request is merged, cite that comment as `comment:<comment-id>`. A comment written by a board user is accepted as evidence. A comment written by an agent is not.
+5. Report `done`. Do not report `blocked`, and do not ask the board to mark the task done by hand, for a check the steps above can satisfy.
+
+**When a named person merges the request.** Your part ends once the request is open, its pipeline is green and its description is complete. An opened request is `ready_for_review`, which is not accepted evidence, so do not report `done` yet and do not report `blocked`. Keep the task `in_review` with a scheduled monitor (see **Monitors and Watchers**) so the merge wakes you. On that wake, or on the person's comment that it is merged, follow the steps above and report `done`.
+
+Report `blocked` only for work that needs someone else and has no scheduled way back to you, such as a credential you do not have, and name that exact action as the blocker.
+
 **Step 8 — Update status and communicate.** Always include the run ID header.
 
 **Bounded write retry.** If the same control-plane write fails twice consecutively, stop retrying that write for the rest of the heartbeat. Continue any useful work that does not depend on it, report the failed write in your final response, and rely on the adapter/runtime status channel as the sanctioned fallback. Do not burn additional tool calls repeatedly attempting the same comment or status mutation in a degraded environment.
@@ -314,6 +328,8 @@ Status values: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`,
 - `blocked` — cannot proceed until something specific changes. Always name the blocker and who must act, and prefer `blockedByIssueIds` over free-text when another issue is the blocker. `parentId` alone does not imply a blocker.
 - `done` — work complete, no follow-up on this issue.
 - `cancelled` — intentionally abandoned, not to be resumed.
+
+**Blocker reason codes.** When you report `blocked`, set the blocker `reasonCode` to one the platform recognises: `environment_unavailable`, `tool_unavailable`, `permission_denied`, `credential_missing`, `policy_restricted`, `budget_exhausted`, `external_service_unavailable`, `repository_checkout_pending`, or `other` with the specifics in the unblock action. Do not invent a reason code: the code decides whether Paperclip continues the work itself or waits for a person. Waiting on another task is not a reason code; record it with `blockedByIssueIds`.
 
 ### Monitors and Watchers (say only what you actually scheduled)
 

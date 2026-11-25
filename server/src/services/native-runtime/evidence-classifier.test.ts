@@ -163,4 +163,74 @@ describe("classifyNativeEvidence", () => {
       });
     });
   });
+
+  describe("board comment evidence", () => {
+    const commentId = "00000000-0000-4000-8000-000000000279";
+    const commentRef = `comment:${commentId}`;
+    const boardComment = {
+      id: commentId,
+      authorType: "user",
+      authorUserId: "board-user",
+      authorAgentId: null,
+      derivedAuthorAgentId: null,
+      deletedAt: null,
+    };
+
+    function assessCommentEvidence(row: Record<string, unknown> | null) {
+      return classifyNativeEvidence({
+        ...input,
+        db: row ? evidenceDb(row) : { select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }) }) } as unknown as Db,
+        result: {
+          reportedWorkDisposition: "done",
+          summary: "Board confirmed the merge request is merged",
+          completionClaim: {
+            contractRevision: "1",
+            objectiveSatisfied: true,
+            criteria: [{ criterionId: "objective", status: "satisfied", evidenceRefs: [commentRef] }],
+            remainingWork: [],
+          },
+          verification: [],
+        },
+      });
+    }
+
+    it("accepts a comment written by a board user as evidence", async () => {
+      const assessment = await assessCommentEvidence(boardComment);
+
+      expect(assessment.objectiveSatisfied).toBe(true);
+      expect(assessment.acceptedEvidenceRefs).toEqual([commentRef]);
+      expect(assessment.criterionAssessments[0]?.evidenceRefs[0]).toMatchObject({
+        kind: "comment",
+        outcome: "accepted",
+        reasonCode: "board_comment_attested",
+        durableRecordId: commentId,
+      });
+    });
+
+    it.each([
+      ["written by an agent", { authorType: "agent", authorUserId: null, authorAgentId: "agent-1" }],
+      ["a board sentinel attributed to an agent", { derivedAuthorAgentId: "agent-1" }],
+      ["a system notice", { authorType: "system", authorUserId: null }],
+      ["a deleted comment", { deletedAt: new Date("2026-11-25T16:30:00Z") }],
+    ])("does not accept a comment that is %s", async (_label, override) => {
+      const assessment = await assessCommentEvidence({ ...boardComment, ...override });
+
+      expect(assessment.objectiveSatisfied).toBe(false);
+      expect(assessment.acceptedEvidenceRefs).toEqual([]);
+      expect(assessment.criterionAssessments[0]?.evidenceRefs[0]).toMatchObject({
+        kind: "comment",
+        reasonCode: "comment_not_board_authored",
+      });
+    });
+
+    it("reports a comment that does not exist on this issue as missing", async () => {
+      const assessment = await assessCommentEvidence(null);
+
+      expect(assessment.criterionAssessments[0]?.evidenceRefs[0]).toMatchObject({
+        kind: "comment",
+        outcome: "missing",
+        reasonCode: "comment_missing",
+      });
+    });
+  });
 });

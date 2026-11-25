@@ -321,6 +321,36 @@ describe("paperclip skill utils", () => {
     expect(body).toContain("**Step 8 — Update status and communicate.**");
   });
 
+  it("hands a request that a named person merges off in review instead of blocking", async () => {
+    const body = (await fs.readFile(path.resolve("skills/paperclip/SKILL.md"), "utf8")).replace(/\s+/g, " ");
+    const closing = body.split("### Closing work that ends in a merge request on any git host")[1]?.split("**Step 8")[0];
+    expect(closing).toContain("`work_product:<work-product-id>`");
+    expect(closing).toContain("`comment:<comment-id>`");
+    expect(closing).toContain("When a named person merges the request");
+    expect(closing).toContain("Keep the task `in_review` with a scheduled monitor");
+    expect(closing).toContain("do not report `blocked`");
+  });
+
+  it("lists the blocker reason codes the platform recognises and forbids inventing one", async () => {
+    const body = (await fs.readFile(path.resolve("skills/paperclip/SKILL.md"), "utf8")).replace(/\s+/g, " ");
+    const reasonCodes = body.split("**Blocker reason codes.**")[1]?.split("### Monitors and Watchers")[0];
+    for (const code of [
+      "environment_unavailable",
+      "tool_unavailable",
+      "permission_denied",
+      "credential_missing",
+      "policy_restricted",
+      "budget_exhausted",
+      "external_service_unavailable",
+      "repository_checkout_pending",
+      "other",
+    ]) {
+      expect(reasonCodes).toContain(`\`${code}\``);
+    }
+    expect(reasonCodes).toContain("Do not invent a reason code");
+    expect(reasonCodes).toContain("blockedByIssueIds");
+  });
+
   it("keeps the external-chat shortcut behind the server-verified harness boundary", async () => {
     const skillBody = await fs.readFile(path.resolve("skills/paperclip/SKILL.md"), "utf8");
     const shortcut = skillBody.match(

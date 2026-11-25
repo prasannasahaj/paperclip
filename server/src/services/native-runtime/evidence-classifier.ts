@@ -9,6 +9,7 @@ import {
   heartbeatRunEvents,
   issueApprovals,
   issueAttachments,
+  issueComments,
   issueThreadInteractions,
   issueWorkProducts,
 } from "@paperclipai/db";
@@ -23,7 +24,7 @@ export type NativeEvidenceOutcome = "accepted" | "missing" | "rejected" | "unver
 
 export interface NativeEvidenceRefAssessment {
   ref: string;
-  kind: "event" | "work_product" | "approval" | "interaction" | "attachment" | "case_handoff" | "unknown";
+  kind: "event" | "work_product" | "approval" | "interaction" | "attachment" | "case_handoff" | "comment" | "unknown";
   outcome: NativeEvidenceOutcome;
   reasonCode: string;
   durableRecordId: string | null;
@@ -114,6 +115,20 @@ function uuidRef(ref: string, prefixes: string[]): string | null {
     return match?.[1] ?? null;
   }
   return null;
+}
+
+function isBoardAuthoredComment(row: {
+  authorType: string | null;
+  authorUserId: string | null;
+  authorAgentId: string | null;
+  derivedAuthorAgentId: string | null;
+  deletedAt: Date | null;
+}): boolean {
+  return row.authorType === "user"
+    && row.authorUserId !== null
+    && row.authorAgentId === null
+    && row.derivedAuthorAgentId === null
+    && row.deletedAt === null;
 }
 
 export function readNativeEventEvidenceOutcome(value: unknown): "accepted" | "rejected" | null {
@@ -257,6 +272,27 @@ async function classifyEvidenceRef(input: {
     return row
       ? { ref: input.ref, kind: "attachment", outcome: "accepted", reasonCode: "attachment_persisted", durableRecordId: row.id }
       : { ref: input.ref, kind: "attachment", outcome: "missing", reasonCode: "attachment_missing", durableRecordId: null };
+  }
+
+  const commentId = uuidRef(input.ref, ["comment"]);
+  if (commentId) {
+    const query = input.db.select({
+      id: issueComments.id,
+      authorType: issueComments.authorType,
+      authorUserId: issueComments.authorUserId,
+      authorAgentId: issueComments.authorAgentId,
+      derivedAuthorAgentId: issueComments.derivedAuthorAgentId,
+      deletedAt: issueComments.deletedAt,
+    }).from(issueComments).where(and(
+      eq(issueComments.id, commentId),
+      eq(issueComments.companyId, input.companyId),
+      eq(issueComments.issueId, input.issueId),
+    )).limit(1);
+    const [row] = await (input.lockSources ? query.for("share", { noWait: true }) : query);
+    if (!row) return { ref: input.ref, kind: "comment", outcome: "missing", reasonCode: "comment_missing", durableRecordId: null };
+    return isBoardAuthoredComment(row)
+      ? { ref: input.ref, kind: "comment", outcome: "accepted", reasonCode: "board_comment_attested", durableRecordId: row.id }
+      : { ref: input.ref, kind: "comment", outcome: "unverifiable", reasonCode: "comment_not_board_authored", durableRecordId: row.id };
   }
 
   return {
