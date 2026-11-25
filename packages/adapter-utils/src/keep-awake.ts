@@ -6,6 +6,8 @@ type SpawnSleepAssertion = (
   options: { stdio: "ignore" },
 ) => Pick<ChildProcess, "unref" | "on">;
 
+export const KEEP_AWAKE_MAX_SECONDS = 30 * 60;
+
 export interface KeepAwakeOptions {
   platform?: NodeJS.Platform;
   spawnSleepAssertion?: SpawnSleepAssertion;
@@ -20,7 +22,7 @@ export function preventIdleSleepWhileProcessAlive(
   if (!Number.isInteger(pid) || pid <= 0) return;
   const spawnSleepAssertion = options.spawnSleepAssertion ?? spawn;
   try {
-    const assertion = spawnSleepAssertion("caffeinate", ["-i", "-w", String(pid)], {
+    const assertion = spawnSleepAssertion("caffeinate", ["-i", "-t", String(KEEP_AWAKE_MAX_SECONDS), "-w", String(pid)], {
       stdio: "ignore",
     });
     assertion.on("error", () => undefined);

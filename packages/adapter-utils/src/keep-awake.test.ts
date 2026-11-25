@@ -1,21 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { preventIdleSleepWhileProcessAlive } from "./keep-awake.js";
+import {
+  KEEP_AWAKE_MAX_SECONDS,
+  preventIdleSleepWhileProcessAlive,
+} from "./keep-awake.js";
 
 function fakeAssertion() {
   return { on: vi.fn(), unref: vi.fn() };
 }
 
 describe("preventIdleSleepWhileProcessAlive", () => {
-  it("holds an idle-sleep assertion tied to the agent pid on macOS", () => {
+  it("holds an idle-sleep assertion tied to the agent pid, capped at 30 minutes, on macOS", () => {
     const assertion = fakeAssertion();
     const spawnSleepAssertion = vi.fn(() => assertion);
 
     preventIdleSleepWhileProcessAlive(4242, { platform: "darwin", spawnSleepAssertion });
 
-    expect(spawnSleepAssertion).toHaveBeenCalledWith("caffeinate", ["-i", "-w", "4242"], {
-      stdio: "ignore",
-    });
+    expect(spawnSleepAssertion).toHaveBeenCalledWith(
+      "caffeinate",
+      ["-i", "-t", "1800", "-w", "4242"],
+      { stdio: "ignore" },
+    );
     expect(assertion.unref).toHaveBeenCalled();
+  });
+
+  it("never holds the assertion longer than 30 minutes", () => {
+    expect(KEEP_AWAKE_MAX_SECONDS).toBe(30 * 60);
   });
 
   it.each(["linux", "win32"] as const)("does nothing on %s", (platform) => {
