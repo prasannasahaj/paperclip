@@ -864,6 +864,13 @@ async function attachPlaywrightBrowserServer(input: {
     "stdout",
     `[paperclip] Playwright browser network stubbing: browser_route ${browser.mockNetwork ? "available" : "off"}.\n`,
   );
+  if (launch.cdpEndpoint) {
+    await input.onLog(
+      "stdout",
+      `[paperclip] Playwright browser attached to the running browser at ${launch.cdpEndpoint}; it keeps that browser's logins.\n`,
+    );
+    return;
+  }
   const login = launch.loginRestored
     ? `restoring saved login from ${launch.storageStatePath}`
     : `no saved login at ${launch.storageStatePath}; the browser starts signed out`;
