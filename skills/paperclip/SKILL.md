@@ -605,8 +605,6 @@ Load `references/workflows.md` when the task matches one of these:
 
 ## Cases
 
-Load `references/child-recovery.md` when a child task you created fails, is cancelled, goes silent or wakes you with `issue_blocker_stalled`.
-
 Load `references/cases.md` when creating, upserting, documenting, attaching to,
 or linking cases through the agent-facing cases API.
 
@@ -896,3 +894,5 @@ provider, and keep the agent assigned with `continuationPolicy: "wake_assignee"`
 so the answer resumes verification. A handoff comment asking the user to comment
 back or reassign the task is not a confirmation card. The card records the user's
 answer; verify the provider's gate and publish result before continuing.
+
+Load `references/child-recovery.md` when a child task you created fails, is cancelled, goes silent or wakes you with `issue_blocker_stalled`.
