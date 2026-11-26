@@ -871,6 +871,13 @@ async function attachPlaywrightBrowserServer(input: {
     );
     return;
   }
+  if (browser.userDataDir) {
+    await input.onLog(
+      "stdout",
+      `[paperclip] Playwright browser (${browser.headed ? "headed" : "headless"}) ready; logins persist in ${browser.userDataDir}.\n`,
+    );
+    return;
+  }
   const login = launch.loginRestored
     ? `restoring saved login from ${launch.storageStatePath}`
     : `no saved login at ${launch.storageStatePath}; the browser starts signed out`;

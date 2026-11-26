@@ -13,6 +13,7 @@ export interface PlaywrightBrowserConfig {
   images: boolean;
   storageStatePath: string | null;
   cdpEndpoint: string | null;
+  userDataDir: string | null;
   allowedOrigins: string[];
   mockNetwork: boolean;
 }
@@ -50,6 +51,9 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
   const cdpEndpoint = typeof browser.cdpEndpoint === "string" && browser.cdpEndpoint.trim()
     ? browser.cdpEndpoint.trim()
     : null;
+  const userDataDir = typeof browser.userDataDir === "string" && browser.userDataDir.trim()
+    ? browser.userDataDir.trim()
+    : null;
   const allowedOrigins = Array.isArray(browser.allowedOrigins)
     ? browser.allowedOrigins.filter((origin): origin is string => typeof origin === "string" && origin.length > 0)
     : [];
@@ -59,6 +63,7 @@ export function readPlaywrightBrowserConfig(config: Record<string, unknown>): Pl
     images: browser.images === true,
     storageStatePath,
     cdpEndpoint,
+    userDataDir,
     allowedOrigins,
     mockNetwork: browser.mockNetwork !== false,
   };
@@ -81,7 +86,8 @@ export function buildPlaywrightBrowserLaunch(input: {
   const { config } = input;
   const storageStatePath = config.storageStatePath ?? defaultPlaywrightStorageStatePath(input.instanceRoot);
   const attachesToRunningBrowser = config.cdpEndpoint !== null;
-  const loginRestored = !attachesToRunningBrowser && fs.existsSync(storageStatePath);
+  const keepsPersistentProfile = !attachesToRunningBrowser && config.userDataDir !== null;
+  const loginRestored = !attachesToRunningBrowser && !keepsPersistentProfile && fs.existsSync(storageStatePath);
   const outputDir = path.join(input.stateDir, "runs", input.runId, "browser");
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -98,6 +104,10 @@ export function buildPlaywrightBrowserLaunch(input: {
   ];
   if (config.cdpEndpoint) {
     args.push("--cdp-endpoint", config.cdpEndpoint);
+  } else if (config.userDataDir) {
+    fs.mkdirSync(config.userDataDir, { recursive: true, mode: 0o700 });
+    args.push("--user-data-dir", config.userDataDir);
+    if (!config.headed) args.push("--headless");
   } else {
     args.push("--isolated");
     if (!config.headed) args.push("--headless");

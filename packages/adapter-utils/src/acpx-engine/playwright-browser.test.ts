@@ -15,6 +15,7 @@ const ENABLED: PlaywrightBrowserConfig = {
   images: false,
   storageStatePath: null,
   cdpEndpoint: null,
+  userDataDir: null,
   allowedOrigins: [],
   mockNetwork: true,
 };
@@ -36,6 +37,7 @@ describe("readPlaywrightBrowserConfig", () => {
       images: false,
       storageStatePath: null,
       cdpEndpoint: null,
+      userDataDir: null,
       allowedOrigins: [],
       mockNetwork: true,
     });
@@ -49,6 +51,7 @@ describe("readPlaywrightBrowserConfig", () => {
         images: true,
         storageStatePath: " /tmp/login.json ",
         cdpEndpoint: " http://localhost:9222 ",
+        userDataDir: " /tmp/qa-profile ",
         allowedOrigins: ["http://localhost:3000", "", 7],
         mockNetwork: true,
       },
@@ -59,6 +62,7 @@ describe("readPlaywrightBrowserConfig", () => {
       images: true,
       storageStatePath: "/tmp/login.json",
       cdpEndpoint: "http://localhost:9222",
+      userDataDir: "/tmp/qa-profile",
       allowedOrigins: ["http://localhost:3000"],
       mockNetwork: true,
     });
@@ -100,6 +104,21 @@ describe("buildPlaywrightBrowserLaunch", () => {
     expect(server.args[0]).toBe("/pkg/playwright-mcp/cli.js");
     expect(server.args).toContain("--isolated");
     expect(server.args).toContain("--headless");
+    expect(server.args).not.toContain("--user-data-dir");
+  });
+
+  it("keeps logins between runs in a persistent profile when userDataDir is set", () => {
+    const userDataDir = path.join(root, "profiles", "qa");
+    const { server, loginRestored } = launch({ ...ENABLED, headed: true, userDataDir });
+    expect(server.args).not.toContain("--isolated");
+    expect(server.args[server.args.indexOf("--user-data-dir") + 1]).toBe(userDataDir);
+    expect(fs.existsSync(userDataDir)).toBe(true);
+    expect(loginRestored).toBe(false);
+  });
+
+  it("attaches to a running browser instead of using the persistent profile when both are set", () => {
+    const { server } = launch({ ...ENABLED, cdpEndpoint: "http://127.0.0.1:9333", userDataDir: "/profiles/qa" });
+    expect(server.args).toContain("--cdp-endpoint");
     expect(server.args).not.toContain("--user-data-dir");
   });
 

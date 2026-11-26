@@ -23,6 +23,7 @@ QA agents verify finished work in a real browser through a Playwright MCP server
 | `images` | `false` | Send screenshots to the model. Off keeps tokens low; the page is read as a text snapshot. |
 | `storageStatePath` | `<instance root>/qa-browser/storage-state.json` | Saved login to restore. |
 | `cdpEndpoint` | none | Attach to a browser you already run instead of starting an in-memory one. See [Attach to a long-lived QA Chrome](#attach-to-a-long-lived-qa-chrome). |
+| `userDataDir` | none | Keep logins in a persistent Chrome profile at this path instead of an in-memory browser. See [Keep a persistent QA profile](#keep-a-persistent-qa-profile). |
 | `allowedOrigins` | none | Origins the browser may request. Not a security boundary: redirects are not covered. |
 | `mockNetwork` | `true` | Give the agent the `browser_route` tool (Playwright MCP `--caps network`) so it can write stubs for the screen it is verifying. Set `false` to withhold it. |
 
@@ -35,6 +36,24 @@ node skills/paperclip-qa-browser/scripts/save-login.mjs http://localhost:3000
 ```
 
 Sign in in the window that opens, then press Enter in the terminal. The file is written with mode `0600`. It holds session cookies and local storage for the QA account, so keep only QA logins in it. Run it again when the session expires.
+
+## Keep a persistent QA profile
+
+Use this when a saved login file keeps expiring or you want to sign in once by hand and have every later run start signed in, without keeping a Chrome running. The run starts its own Chrome on a profile folder that survives the run.
+
+Sign in once with the same Chrome and folder (quit Chrome afterwards, since a profile can be open in one Chrome at a time):
+
+```sh
+open -na "Google Chrome" --args --user-data-dir=$HOME/.paperclip/instances/default/qa-browser/profile http://localhost:3000
+```
+
+```json
+{ "browser": { "enabled": true, "headed": true, "userDataDir": "/Users/you/.paperclip/instances/default/qa-browser/profile" } }
+```
+
+- Runs on this profile cannot overlap: a second run fails to start while another holds the folder.
+- `cdpEndpoint` wins when both are set. `storageStatePath` is ignored with a profile, because the profile keeps the login.
+- Keep only QA logins in the profile.
 
 ## Attach to a long-lived QA Chrome
 
