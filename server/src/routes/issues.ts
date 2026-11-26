@@ -14712,7 +14712,7 @@ export function issueRoutes(
     issue: { companyId: string; status: string; parentId: string | null; assigneeAgentId: string | null; assigneeUserId: string | null; checkoutRunId: string | null; executionRunId: string | null; conversationAgentId?: string | null; conversationUserId?: string | null; executionState?: unknown },
     requestedStatus: unknown = req.body.status,
     options: { allowStageApproval?: boolean } = {},
-  ): Promise<"defer_final_status" | undefined> {
+  ): Promise<"defer_final_status" | "hand_back_changes_request" | undefined> {
     const runId = req.actor.type === "agent" ? req.actor.runId : null;
     if (!runId || !req.actor.agentId || req.actor.agentId !== issue.assigneeAgentId) return;
     if (runId !== issue.executionRunId && runId !== issue.checkoutRunId) return;
@@ -14725,10 +14725,10 @@ export function issueRoutes(
     const run = await heartbeat.getRun(runId);
     if (!run || run.runtimeMode !== "native" || run.status !== "running"
       || run.agentId !== req.actor.agentId || run.companyId !== issue.companyId) return;
-    if (options.allowStageApproval && requestedStatus === "done" && issue.status === "in_review" &&
-        activeExecutionParticipantAgentId(issue) === req.actor.agentId) {
-      return "defer_final_status";
-    }
+    const isActiveStageParticipant = options.allowStageApproval && issue.status === "in_review" &&
+      activeExecutionParticipantAgentId(issue) === req.actor.agentId;
+    if (isActiveStageParticipant && requestedStatus === "done") return "defer_final_status";
+    if (isActiveStageParticipant && requestedStatus === "in_progress") return "hand_back_changes_request";
     // A blocker that the dependency rules reject anyway keeps its specific
     // error; otherwise the run reports the block with paperclip_block.
     if (Array.isArray(req.body.blockedByIssueIds) && req.body.blockedByIssueIds.length > 0) {
@@ -15422,6 +15422,10 @@ export function issueRoutes(
       }
       Object.assign(updateFields, transition.patch);
       let deferredNativeStageApproval = false;
+      if (nativeStageApproval === "hand_back_changes_request") {
+        const handsTaskBack = transition.patch.assigneeAgentId !== undefined && transition.patch.assigneeAgentId !== existing.assigneeAgentId;
+        if (transition.decision?.outcome !== "changes_requested" || !handsTaskBack) throw nativeRunStatusReportedByFinish(req.body.status);
+      }
       if (nativeStageApproval === "defer_final_status") {
         const approvedStage = transition.decision?.outcome === "approved";
         const handsTaskToNextParticipant =

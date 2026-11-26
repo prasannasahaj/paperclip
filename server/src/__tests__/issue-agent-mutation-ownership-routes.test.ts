@@ -3285,6 +3285,43 @@ describe("agent issue mutation checkout ownership", () => {
         });
       });
 
+      it("records a changes request and hands the task back to the engineer", async () => {
+        const issue = reviewIssue([finalStage, laterStage]);
+        mockIssueService.getById.mockResolvedValue(issue);
+        mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({ ...issue, ...patch }));
+        mockHeartbeatService.cancelRun.mockResolvedValue({ id: ownerRunId, status: "cancelled" });
+        const db = createRunContextDb({}, ownerAgentId, ownerRunId, [], true);
+        const inserted: Array<{ table: string; values: Record<string, unknown> }> = [];
+        db.insert = vi.fn((table: Parameters<typeof getTableName>[0]) => ({ values: vi.fn(async (values: Record<string, unknown>) => {
+          inserted.push({ table: getTableName(table), values });
+        }) })) as typeof db.insert;
+
+        const res = await request(createApp(runActor(), db)).patch(`/api/issues/${issueId}`)
+          .send({ status: "in_progress", comment: "Changes requested: strategies.md:167 still describes the full frame load." });
+
+        expect(res.status, JSON.stringify(res.body)).toBe(200);
+        const patch = mockIssueService.update.mock.calls[0]?.[1] as Record<string, any>;
+        expect(patch.status).toBe("in_progress");
+        expect(patch.assigneeAgentId).toBe(peerAgentId);
+        expect(patch.executionState).toMatchObject({
+          status: "changes_requested", currentStageId: finalStage, lastDecisionOutcome: "changes_requested", changesRequestedCount: 1,
+        });
+        const decision = inserted.find(row => row.table === "issue_execution_decisions")?.values;
+        expect(decision).toMatchObject({ issueId, stageId: finalStage, outcome: "changes_requested", actorAgentId: ownerAgentId });
+      });
+
+      it("keeps refusing a changes request when this run is not the active participant", async () => {
+        const issue = reviewIssue([finalStage]);
+        mockIssueService.getById.mockResolvedValue({ ...issue,
+          executionState: { ...(issue.executionState as unknown as Record<string, unknown>), currentParticipant: { type: "agent", agentId: peerAgentId } } });
+
+        const res = await request(createApp(runActor())).patch(`/api/issues/${issueId}`)
+          .send({ status: "in_progress", comment: "Changes requested: nope." });
+
+        expect(res.status, JSON.stringify(res.body)).toBe(409);
+        expect(mockIssueService.update).not.toHaveBeenCalled();
+      });
+
       it("keeps refusing the approval when this run is not the active participant", async () => {
         const issue = reviewIssue([finalStage]);
         mockIssueService.getById.mockResolvedValue({ ...issue,
