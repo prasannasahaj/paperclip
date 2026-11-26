@@ -4115,7 +4115,11 @@ export function issueRoutes(
     if (!source || isConversation(source)) return null;
     const decision = await decideIssueAccess(req, source, "issue:mutate");
     if (!decision.allowed) return null;
-    if (assigneeAgentId && assigneeAgentId !== req.actor.agentId) {
+    if (
+      assigneeAgentId &&
+      assigneeAgentId !== req.actor.agentId &&
+      !(await isAssigneeActorsManager(req.actor.agentId, assigneeAgentId))
+    ) {
       const ancestor = await svc.findOpenAncestorCreatedByAgent(
         source.id,
         assigneeAgentId,
@@ -7759,6 +7763,15 @@ export function issueRoutes(
     };
   }
 
+  async function isAssigneeActorsManager(
+    actorAgentId: string | null | undefined,
+    assigneeAgentId: string,
+  ) {
+    if (!actorAgentId) return false;
+    const actor = await agentsSvc.getById(actorAgentId);
+    return actor?.reportsTo === assigneeAgentId;
+  }
+
   /**
    * Refuse an agent creating a child issue assigned to the agent that created
    * a still-open ancestor in the same chain. That shape is a delegation cycle
@@ -7766,7 +7779,9 @@ export function issueRoutes(
    * something the other assumed it had, the chain of blocked issues grows,
    * and no one tells the human. Humans are unaffected, and closed ancestors
    * do not count — re-engaging the creator of finished work is normal.
-   * Self-assigned decomposition is not delegation back to another agent.
+   * Self-assigned decomposition is not delegation back to another agent, and
+   * neither is escalating to the manager the actor reports to: raising a
+   * blocker upward hands a question to the lead, not the work back.
    */
   async function assertNoAgentDelegationCycle(input: {
     actorType: string;
@@ -7777,6 +7792,7 @@ export function issueRoutes(
     if (input.actorType !== "agent") return;
     if (input.assigneeAgentId === input.actorAgentId) return;
     if (!input.parentIssueId || !input.assigneeAgentId) return;
+    if (await isAssigneeActorsManager(input.actorAgentId, input.assigneeAgentId)) return;
     const ancestor = await svc.findOpenAncestorCreatedByAgent(
       input.parentIssueId,
       input.assigneeAgentId,

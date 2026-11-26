@@ -52,7 +52,8 @@ boundary; board-user assignments remain forbidden. New tasks retain the creator'
 effective containment policy and quarantined source attribution. An exact issue-id
 scope does not implicitly authorize new descendants, and a permitted parent does
 not grant access to an unrelated project. An explicit root-task scope includes
-its descendants. Self-assigned decomposition is not a delegation cycle.
+its descendants. Self-assigned decomposition, and a child assigned to the manager the
+agent reports to, are not delegation cycles.
 
 Permission denials must identify the rejected action and specific restriction.
 Agents must surface failed instruction-save receipts and explain when the current

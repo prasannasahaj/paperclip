@@ -14,6 +14,8 @@ const agentStatusById: Record<string, string> = {
   [IDLE_AGENT_ID]: "idle",
 };
 
+const agentReportsToById: Record<string, string> = {};
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   findOpenAncestorCreatedByAgent: vi.fn(),
@@ -68,6 +70,7 @@ vi.mock("../services/index.js", () => ({
       id,
       companyId: "company-1",
       status: agentStatusById[id] ?? "idle",
+      reportsTo: agentReportsToById[id] ?? null,
     })),
     resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
       ambiguous: false,
@@ -342,6 +345,62 @@ describe("agent delegation cycle guard", () => {
 
     expect(res.status).toBe(201);
     expect(mockIssueService.createChild).toHaveBeenCalled();
+  });
+
+  it("allows an agent child assigned to the manager the agent reports to", async () => {
+    agentReportsToById[AGENT_ACTOR_ID] = IDLE_AGENT_ID;
+    try {
+      const parent = makeIssue();
+      mockIssueService.getById.mockResolvedValue(parent);
+      mockIssueService.findOpenAncestorCreatedByAgent.mockResolvedValue({
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        identifier: "PAP-100",
+        parentId: null,
+        createdByAgentId: IDLE_AGENT_ID,
+        status: "in_progress",
+      });
+      mockIssueService.createChild.mockResolvedValue({
+        issue: makeIssue({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", parentId: parent.id, assigneeAgentId: IDLE_AGENT_ID }),
+        parentBlockerAdded: false,
+      });
+
+      const res = await request(createApp(agentActor()))
+        .post(`/api/issues/${parent.id}/children`)
+        .send({
+          title: "Blocked: need a ruling",
+          description: "Escalating to my manager",
+          assigneeAgentId: IDLE_AGENT_ID,
+        });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(mockIssueService.createChild).toHaveBeenCalled();
+    } finally {
+      delete agentReportsToById[AGENT_ACTOR_ID];
+    }
+  });
+
+  it("still refuses a child assigned to an ancestor's creator that is not the agent's manager", async () => {
+    agentReportsToById[AGENT_ACTOR_ID] = PAUSED_AGENT_ID;
+    try {
+      const parent = makeIssue();
+      mockIssueService.getById.mockResolvedValue(parent);
+      mockIssueService.findOpenAncestorCreatedByAgent.mockResolvedValue({
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        identifier: "PAP-100",
+        parentId: null,
+        createdByAgentId: IDLE_AGENT_ID,
+        status: "in_progress",
+      });
+
+      const res = await request(createApp(agentActor()))
+        .post(`/api/issues/${parent.id}/children`)
+        .send({ title: "Hand it back", description: "Bounce", assigneeAgentId: IDLE_AGENT_ID });
+
+      expect(res.status).toBe(409);
+      expect(res.body.details).toMatchObject({ code: "delegation_cycle" });
+    } finally {
+      delete agentReportsToById[AGENT_ACTOR_ID];
+    }
   });
 
   it("does not consult the guard for board actors", async () => {
