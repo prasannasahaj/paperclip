@@ -2242,9 +2242,13 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
 
       for (const issue of typedBlockedIssues) {
         const descriptor = issue.unblockDescriptor;
+        const blockerAttention = blockerAttentionOf(issue);
+        const coveredByTerminalBlockerCard = terminalBlockerRequiresAttention(blockerAttention)
+          && Boolean(blockerAttention.terminalBlockerIssueId)
+          && blockerAttention.terminalBlockerIssueId !== issue.id;
         const humanOwnerMatches = descriptor?.owner === "board"
           || (descriptor?.owner && "userId" in descriptor.owner && descriptor.owner.userId === options.userId);
-        if (descriptor && humanOwnerMatches && isProspectiveBlockedTransition(issue)) {
+        if (descriptor && humanOwnerMatches && !coveredByTerminalBlockerCard && isProspectiveBlockedTransition(issue)) {
           const issueSummary = blockedIssueSummaries.get(issue.id) ?? null;
           add(createItem({
             companyId,
@@ -2282,7 +2286,6 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
             since: issue.blockedTransitionAt,
           }, { key: `blocked:${issue.id}`, anchor: true });
         }
-        const blockerAttention = blockerAttentionOf(issue);
         if (!terminalBlockerRequiresAttention(blockerAttention)) continue;
         const issueSummary = blockedIssueSummaries.get(issue.id) ?? null;
         const terminalIssueId = blockerAttention.terminalBlockerIssueId ?? issue.id;

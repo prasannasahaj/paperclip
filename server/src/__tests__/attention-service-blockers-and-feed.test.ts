@@ -214,6 +214,31 @@ describeAttentionEmbeddedPostgres("attention service: blockers and feed", () => 
     expect(rows[0]?.subject.id).not.toBe(blockedId);
   });
 
+  it("folds a human-owned blocked task into the terminal blocker card that already covers its chain", async () => {
+    const { companyId } = await seedCompany("ATF");
+    const terminalId = await insertIssue({
+      companyId,
+      identifier: "ATF-1",
+      title: "Merge and deploy to QA",
+      status: "todo",
+    });
+    const blockedId = await insertIssue({
+      companyId,
+      identifier: "ATF-2",
+      title: "Compare numbers on QA",
+      status: "blocked",
+      unblockDescriptor: { owner: "board", action: "Press Retry on the reviewer" },
+      blockedTransitionAt: new Date("2026-07-23T18:30:00.000Z"),
+    });
+    await db.insert(issueRelations).values({ companyId, issueId: terminalId, relatedIssueId: blockedId, type: "blocks" });
+
+    const feed = await attentionService(db).list(companyId, { userId: "board-user" });
+    const rows = feed.items.filter((item) => item.sourceKind === "blocker_attention");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ subject: { id: terminalId }, dedupKey: `blocker:${terminalId}` });
+  });
+
   it("orders terminal blockers by blocked-work weight descending", async () => {
     const { companyId } = await seedCompany("ATR");
     const heavyTerminalId = await insertIssue({
