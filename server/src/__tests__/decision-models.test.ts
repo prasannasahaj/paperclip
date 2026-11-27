@@ -534,6 +534,15 @@ describe("company decision service", () => {
     expect((await db.select().from(budgetReservations).where(eq(budgetReservations.companyId, f.companyId)))[0].state).toBe("settled");
     expect(f.provider).toHaveBeenCalledTimes(1);
   });
+  it("gives the provider 60 seconds before aborting a decision", async () => {
+    const f = await fixture(), timeoutSignal = vi.spyOn(AbortSignal, "timeout");
+    f.provider.mockResolvedValue({ errorCode: "timeout", receipt: decisionReceipt("openai", null) });
+    try {
+      await f.service.decide(f.context, DECISION_TEST_REQUEST);
+      expect(timeoutSignal).toHaveBeenCalledWith(60_000);
+      expect(timeoutSignal).not.toHaveBeenCalledWith(30_000);
+    } finally { timeoutSignal.mockRestore(); }
+  });
   it("recovers an interrupted dispatch once without paying for a retry", async () => {
     const f = await fixture();
     const [invocation] = await db.insert(decisionInvocations).values({ companyId: f.companyId, feature: "test.background", actorType: "system", actorId: "paperclip-decisions",

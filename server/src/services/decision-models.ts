@@ -23,6 +23,7 @@ import { queueBudgetEvaluation } from "./budget-evaluation-work.js";
 import { logActivity } from "./activity-log.js";
 import { decisionReceipt, runDecisionProvider, type DecisionProviderOutcome } from "./decision-model-provider.js";
 
+const PROVIDER_TIMEOUT_MS = 60_000;
 const registeredFeatures = new WeakSet<object>();
 /** Register once in a server module. Feature handles cannot be supplied over JSON/API. */
 export function defineDecisionFeature(id: string, options: { background?: boolean } = {}) {
@@ -293,7 +294,7 @@ export function decisionModelService(db: Db, options: { provider?: typeof runDec
     const invocation = admission.invocation!;
     let outcome: DecisionProviderOutcome;
     try { outcome = await providerCall({ provider: selected.connection.provider, model: invocation.model, apiKey: credential,
-      baseUrl: selected.connection.baseUrl, request: parsed.data, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }); }
+      baseUrl: selected.connection.baseUrl, request: parsed.data, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(PROVIDER_TIMEOUT_MS)]) : AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }); }
     catch { outcome = { errorCode: "provider_failed", receipt: decisionReceipt(selected.connection.provider, null) }; }
     await settle(invocation, outcome);
     const { inputTokens, outputTokens, costCents, costStatus } = outcome.receipt;
