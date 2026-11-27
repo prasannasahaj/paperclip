@@ -1638,7 +1638,7 @@ fn sensitive_key(key: &str, value: &Value) -> bool {
             | "pretokens"
             | "posttokens"
     ) {
-        return !value.is_number();
+        return !value.is_number() && !value.is_null();
     }
     let credential_name = [
         "value",
@@ -2754,6 +2754,23 @@ fn current_timestamp() -> Result<String, DurableRunnerError> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn keeps_a_context_compaction_record_whose_id_embeds_a_long_hex_turn_id() {
+        use super::*;
+        let payload = json!({
+            "compactionId": "turn_lab_e4854cfbe888452e94a1fd3d902ba843:compaction-2",
+            "postTokens": null,
+            "preTokens": null,
+            "reason": "provider",
+            "sameSession": true,
+            "schema": "paperclip.context.compacted.v1",
+        });
+        let stored =
+            preserve_bounded_display_content("context.compacted", &payload, sanitize_value(&payload))
+                .unwrap_or_else(|error| panic!("context.compacted was rejected: {error:?}"));
+        assert_eq!(stored["compactionId"], payload["compactionId"]);
+    }
+
+    #[test]
     fn keeps_a_long_plan_proposal_whole_past_the_display_preview_bound() {
         use super::*;
         let markdown = format!("# Plan\n{}", "- step\n".repeat(2_000).trim_end());
@@ -3291,6 +3308,10 @@ mod tests {
 
     #[test]
     fn usage_count_keys_only_bypass_redaction_for_numbers() {
+        assert_eq!(
+            sanitize_value(&json!({"preTokens": null, "postTokens": null})),
+            json!({"preTokens": null, "postTokens": null})
+        );
         assert_eq!(
             sanitize_value(&json!({"inputTokens": 12, "outputTokens": 3})),
             json!({"inputTokens": 12, "outputTokens": 3})
