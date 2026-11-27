@@ -24,10 +24,6 @@ import { EXECUTION_RECONCILIATION_CAUSES } from "@paperclipai/shared";
 import { currentControllerBootId, readControllerProcess } from "../controller-process-identity.js";
 import { isRemoteWorkspaceSaveInvocationLive } from "../remote-workspaces.js";
 import { idleAccountingSpoolPath, idleOrphanSpoolPath } from "../idle-local-work.js";
-import {
-  NATIVE_ADOPTED_RUNNER_AUTHENTICATION_TIMEOUT,
-  NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE,
-} from "../native-runtime/native-runner-ownership.js";
 import type { LocalOwnerStamp, OwnerProof, RemoteFenceState, RemoteOwnerStamp } from "../owner-proof.js";
 import { OPERATOR_ATTESTED_PROCESS_SPACE } from "../owner-proof.js";
 import { writeEnvironmentCleanup } from "../environment-cleanup-notifications.js";
@@ -50,6 +46,7 @@ import { settleIssueLock } from "./issue-lock-settlement.js";
 import { settleAgentLifecycleLease } from "./agent-lifecycle-lease-settlement.js";
 import { finishedLegacyControllerOwnerStamp, legacyControllerOwnerStamp, settleLegacyControllerLease } from "../legacy-controller-lease.js";
 import { heldInterruptedPreparationWhere, settleHeldInterruptedPreparation } from "../interrupted-preparation-hold-settlement.js";
+import { ownershipUnverifiedHoldWhere, settleOwnershipUnverifiedHold } from "../native-runtime/ownership-unverified-hold-settlement.js";
 import { completedTurnCleanupHoldWhere, settleCompletedTurnCleanupHolds } from "../native-runtime/completed-turn-cleanup-hold-settlement.js";
 import {
   nativeLeaseHolderStamp,
@@ -759,11 +756,13 @@ export const OWNABLE_KINDS: readonly OwnableKind[] = [
     settle: (db, record, context) => settleNativeTokenLease("native_cleanup_lease", db, record, context),
 
   }, nrfVersionLock),
-  runKind("native_ownership_unverified_hold", "Ownership-unverified hold", "ownership",
-    and(eq(heartbeatRuns.runtimeMode, "native"), eq(heartbeatRuns.status, "running"), or(
-      and(eq(heartbeatRuns.errorCode, NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE), eq(heartbeatRuns.nativePhase, "terminal_failure")),
-      eq(heartbeatRuns.errorCode, NATIVE_ADOPTED_RUNNER_AUTHENTICATION_TIMEOUT))),
-    () => ({ kind: "none" }), [1, 2, 7]),
+  {
+    ...runKind("native_ownership_unverified_hold", "Ownership-unverified hold", "ownership", ownershipUnverifiedHoldWhere(),
+      row => row.processPid && row.processStartedAt && row.processHostHash
+        ? { kind: "process", stamp: runProcessStamp(row, "native_ownership_unverified_hold") } : { kind: "none" },
+      [1, 2, 7]),
+    settle: settleOwnershipUnverifiedHold,
+  },
   {
     id: "native_startup_context", title: "Native startup context", obligation: "ownership", storage: "database",
     settle: null, invariantChecks: [1, 2],

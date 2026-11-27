@@ -102,6 +102,7 @@ import { logNativeCleanupQuarantines } from "./services/native-runtime/native-cl
 import { embeddedPostgresOwnerPort } from "./embedded-postgres-owner.js";
 import { deliverExecutionStatuses } from "./services/execution-status-delivery.js";
 import { registerNativeRestartRecheck } from "./services/recovery/ownership-registry.js";
+import { registerHeldRunStopper } from "./services/native-runtime/ownership-unverified-hold-settlement.js";
 import { deliverReconciledExecutions, settleUnrecoverableExecutions } from "./services/execution-recovery-resolution.js";
 import { deliverPendingPauseResumes } from "./services/issue-tree-resume.js";
 import { deliverBudgetResumeContinuations, type BudgetResumeDelivery } from "./services/budget-resume-continuation.js";
@@ -985,6 +986,8 @@ async function startServerWithDatabaseTeardown(
   // A native run whose controller the ownership reconciler proves gone is re-checked here,
   // so a crashed old server's runs end or resume without another server boot.
   if (heartbeat) registerNativeRestartRecheck(runIds => heartbeat.recoverNativeRunsAfterRestart(new Date(), runIds));
+  if (heartbeat) registerHeldRunStopper(({ runId, reason, cancelledByUserId }) => heartbeat.cancelRun(runId, reason,
+    { resultJson: { cancelledByActorType: "user", cancelledByUserId } }));
   const decisionServiceOptions = {
     wakeOriginAgent: createDecisionWakeOriginAgent(heartbeat?.wakeup ?? null),
   };
