@@ -46,7 +46,7 @@ const TERMINAL_ISSUE_STATUSES = ["done", "cancelled"];
 const WAKEABLE_WAITER_STATUSES = ["todo", "in_progress", "in_review", "blocked"];
 const MAX_STALLS_PER_PASS = 200;
 /** A wake row with one of these statuses was delivered or is still pending. */
-const DELIVERED_OR_PENDING_WAKE_STATUSES = ["queued", "deferred_issue_execution", "claimed", "coalesced", "completed"];
+export const DELIVERED_OR_PENDING_WAKE_STATUSES = ["queued", "deferred_issue_execution", "claimed", "coalesced", "completed"];
 /** Waiters of one stall read per page, and scanned per pass before a cursor resumes the rest. */
 const MAX_WAITERS_PER_STALL = 100;
 const MAX_WAITERS_SCANNED_PER_STALL = 500;
@@ -59,7 +59,7 @@ const REFUSED_WAKE_RETRY_MS = 10 * 60_000;
 const MAX_FAILED_STALL_DELIVERIES = 3;
 /** Re-check for a waiter whose workspace hold refuses a run; settling the hold is what lets it run. */
 const HELD_WORKSPACE_RECHECK_MS = 60 * 60_000;
-const NON_INVOKABLE_AGENT_STATUSES = ["paused", "terminated", "pending_approval"];
+export const NON_INVOKABLE_AGENT_STATUSES = ["paused", "terminated", "pending_approval"];
 /** Company-wide passes resume after the last stall a capped pass reached, so every stall is visited. */
 const companyCursors = new Map<string, string>();
 
@@ -118,6 +118,7 @@ export async function readStalls(db: Db, filter: StallFilter, limit = MAX_STALLS
     issueId: issues.id, identifier: issues.identifier, title: issues.title, issueStatus: issues.status, parentId: issues.parentId,
     originKind: issues.originKind, originId: issues.originId,
     projectId: issues.projectId, assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId,
+    createdByAgentId: issues.createdByAgentId,
   }).from(issueRecoveryActions)
     .innerJoin(issues, and(eq(issues.id, issueRecoveryActions.sourceIssueId), eq(issues.companyId, issueRecoveryActions.companyId)))
     .where(and(
@@ -249,7 +250,7 @@ function redactedStallContext(stall: StallRow, relation: IssueBlockerStallRelati
   };
 }
 
-function stallContext(stall: StallRow, relation: IssueBlockerStallRelation): IssueBlockerStalledWakeContext {
+export function stallContext(stall: StallRow, relation: IssueBlockerStallRelation): IssueBlockerStalledWakeContext {
   return {
     stalledIssueId: stall.issueId,
     stalledIssueIdentifier: stall.identifier,

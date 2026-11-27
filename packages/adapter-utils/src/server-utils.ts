@@ -717,7 +717,7 @@ type PaperclipWakeBlockerStall = {
   stalledIssueIdentifier: string | null;
   stalledIssueTitle: string | null;
   stalledIssueStatus: string | null;
-  relation: "child" | "blocker";
+  relation: "child" | "blocker" | "overseer";
   recoveryAction: {
     kind: string | null;
     cause: string | null;
@@ -1365,7 +1365,7 @@ function normalizePaperclipWakeBlockerStall(value: unknown): PaperclipWakeBlocke
     stalledIssueIdentifier,
     stalledIssueTitle: text(stall.stalledIssueTitle),
     stalledIssueStatus: text(stall.stalledIssueStatus),
-    relation: stall.relation === "blocker" ? "blocker" : "child",
+    relation: stall.relation === "blocker" || stall.relation === "overseer" ? stall.relation : "child",
     recoveryAction: {
       kind: text(action.kind),
       cause: text(action.cause),
@@ -3164,7 +3164,25 @@ function renderPaperclipWakePromptBody(
     }
   }
 
-  if (normalized.blockerStall) {
+  if (normalized.blockerStall?.relation === "overseer") {
+    const stall = normalized.blockerStall;
+    const label = stall.stalledIssueIdentifier ?? stall.stalledIssueId ?? "unknown";
+    const action = stall.recoveryAction;
+    lines.push(
+      "",
+      "## Stalled work you oversee",
+      "",
+      `${label}${stall.stalledIssueTitle ? ` ${stall.stalledIssueTitle}` : ""}${stall.stalledIssueStatus ? ` (${stall.stalledIssueStatus})` : ""} is owned by an agent you oversee, and it stopped without a decision. Paperclip would otherwise hand it to the board.`,
+      `- recovery: ${action.kind ?? "unknown"}${action.cause ? ` — ${action.cause}` : ""}${action.status ? ` (${action.status})` : ""}`,
+      ...(action.nextAction ? [`- what is missing: ${action.nextAction}`] : []),
+      "",
+      "Decide what happens next, then stop:",
+      `- Read ${label}'s comments and work first, and decide the open question yourself when you can.`,
+      `- Give your ruling in a comment on ${label}, then hand it back so the assignee or reviewer continues with it: set it back to in_review or in_progress, or reassign it.`,
+      "- Ask the human only when the decision is not yours to make: create an ask_user_questions interaction with a human-only resolverPolicy on the issue, and say what you recommend.",
+      "Do not leave it blocked without a ruling, and do not approve a review on the reviewer's behalf.",
+    );
+  } else if (normalized.blockerStall) {
     const stall = normalized.blockerStall;
     const label = stall.stalledIssueIdentifier ?? stall.stalledIssueId ?? "unknown";
     const action = stall.recoveryAction;

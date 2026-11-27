@@ -58,6 +58,7 @@ import { enqueueOwnQuestionDismissalWake } from "../services/native-runtime/own-
 import { confirmNativeControllerStopped, NATIVE_CONTROLLER_HOST_UNVERIFIED } from "../services/native-runtime/native-controller-host-recovery.js";
 import { confirmOwnerGone, OWNER_UNPROVABLE_CAUSE } from "../services/recovery/owner-gone-attestation.js";
 import { OWNABLE_KINDS } from "../services/recovery/ownership-registry.js";
+import { resolveStallOverseerAgentId } from "../services/recovery/overseer-wakeups.js";
 import { retryNativeWorkspaceExport } from "../services/native-runtime/native-workspace-export-retry.js";
 import { deferredWakeJoinsFirstTurn, firstTurnTakesAllQueuedComments, runAcceptsFirstTurnQueuedInput } from "../services/native-runtime/first-turn-queued-input.js";
 import { reconstructNativeWorkspace, unreconciledNativeExportPredicate } from "../services/native-runtime/native-workspace-reconstruction.js";
@@ -7405,6 +7406,15 @@ export function issueRoutes(
     ) {
       return true;
     }
+    if (
+      await isStallOverseerOfBoardOwnedAction(
+        actorAgentId,
+        issue,
+        await recoveryActionsSvc.getActiveForIssue(issue.companyId, issue.id),
+      )
+    ) {
+      return true;
+    }
     const boundaryDecision = await decideIssueAccess(
       req,
       issue,
@@ -7423,9 +7433,20 @@ export function issueRoutes(
     return false;
   }
 
+  async function isStallOverseerOfBoardOwnedAction(
+    actorAgentId: string,
+    issue: { companyId: string; assigneeAgentId: string | null; createdByAgentId?: string | null },
+    action: { ownerType?: string | null } | null | undefined,
+  ) {
+    if (!issue.assigneeAgentId || action?.ownerType !== "board") return false;
+    const overseerAgentId = await resolveStallOverseerAgentId(db, { companyId: issue.companyId,
+      assigneeAgentId: issue.assigneeAgentId, createdByAgentId: issue.createdByAgentId ?? null });
+    return overseerAgentId === actorAgentId;
+  }
+
   async function requireRecoveryActionAuthority(
     req: Request,
-    issue: { id: string; companyId: string; assigneeAgentId: string | null },
+    issue: { id: string; companyId: string; assigneeAgentId: string | null; createdByAgentId?: string | null },
     activeRecoveryAction: Awaited<
       ReturnType<typeof recoveryActionsSvc.getActiveForIssue>
     >,
@@ -7461,6 +7482,8 @@ export function issueRoutes(
       return true;
     }
 
+    if (await isStallOverseerOfBoardOwnedAction(actorAgentId, issue, activeRecoveryAction)) return true;
+
     throw forbidden("Agent cannot resolve another owner's recovery action", {
       issueId: issue.id,
       recoveryActionId: activeRecoveryAction.id,
@@ -7493,10 +7516,12 @@ export function issueRoutes(
       companyId: string;
       status: string;
       assigneeAgentId: string | null;
+      createdByAgentId?: string | null;
       checkoutRunId?: string | null;
       executionRunId?: string | null;
       executionState?: unknown;
     },
+    activeRecoveryAction?: { ownerType?: string | null } | null,
   ) {
     if (req.actor.type !== "agent") return;
     const actorAgentId = req.actor.agentId;
@@ -7513,7 +7538,9 @@ export function issueRoutes(
         issue.assigneeAgentId,
       )),
     );
-    if (!isSourceOwner && !isExecutionParticipant && !hasPolicyGrant) {
+    const isOverseer = !isSourceOwner && !isExecutionParticipant && !hasPolicyGrant &&
+      await isStallOverseerOfBoardOwnedAction(actorAgentId, issue, activeRecoveryAction);
+    if (!isSourceOwner && !isExecutionParticipant && !hasPolicyGrant && !isOverseer) {
       throw forbidden(
         "Recovery ownership does not authorize this source issue mutation",
         {
@@ -10879,7 +10906,7 @@ export function issueRoutes(
               recoveryAction: activeRecoveryAction,
             });
           } else {
-            await requireRecoverySourceMutationAuthority(req, lockedIssue);
+            await requireRecoverySourceMutationAuthority(req, lockedIssue, activeRecoveryAction);
           }
 
           if (workspaceRetry?.selection) {
@@ -15269,7 +15296,7 @@ export function issueRoutes(
               typeof updateFields.status === "string" &&
               updateFields.status !== existing.status));
         if (recoveryRestrictedSourceMutationRequested) {
-          await requireRecoverySourceMutationAuthority(req, existing);
+          await requireRecoverySourceMutationAuthority(req, existing, activeRecoveryActionBeforeUpdate);
         }
       }
       if (

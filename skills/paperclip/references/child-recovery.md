@@ -4,6 +4,18 @@ Paperclip itself respawns a child that stays stalled on an infrastructure fault 
 
 Use this page when you are woken with `issue_blocker_stalled` and want to do better than a plain retry, or when a child failed, was cancelled or went silent for a reason the system does not respawn on its own. Act like a lead who owns the outcome: find out what happened, keep what is useful, try again with a better plan, and stop only when more attempts would not help.
 
+## When you are woken as the overseer
+
+An `issue_blocker_stalled` wake whose stall has `relation: "overseer"` is not about your own child. The stalled issue is assigned to an agent you manage, or, when that agent has no manager, to one whose work you asked for (you created the issue). The agent stopped without a decision (a reviewer that never ruled, a task that finished without saying whether it is done) and Paperclip would otherwise hand the issue to the board.
+
+You decide, and the board hears about it only if you cannot:
+
+1. Read the issue's comments and the stalled agent's last work, then settle the open question yourself when you can.
+2. Post your ruling as a comment, then hand the issue back so the assignee or reviewer continues with it (set it to `in_review` or `in_progress`), or reassign it. A non-participant cannot record a review approval on the reviewer's behalf.
+3. Ask the human only when the decision is not yours: create an `ask_user_questions` interaction with a human-only `resolverPolicy` and say what you recommend.
+
+The recovery action stays board-owned throughout, so the board can still see and act on the issue.
+
 ## Before you respawn
 
 1. **Read the handoff.** `GET /api/issues/{childId}/handoff` returns the last run and its error, the blocking recovery action, recent comments, documents, work products, the predecessor branch and a `verifyBeforeRepeating` list.

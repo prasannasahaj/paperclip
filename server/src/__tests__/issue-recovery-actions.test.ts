@@ -759,10 +759,10 @@ describeEmbeddedPostgres("issue recovery actions", () => {
   );
 
   it("escalates an unchanged paused-assignee snapshot and publishes its committed notice", async () => {
-    const { companyId, coderId, sourceIssue } = await seedCompany();
+    const { companyId, coderId, managerId, sourceIssue } = await seedCompany();
     const observed = (await issueService(db).update(sourceIssue.id, { status: "todo" }))!;
     await db.update(agents).set({ status: "paused" }).where(eq(agents.id, coderId));
-    const enqueueWakeup = vi.fn(async () => null);
+    const enqueueWakeup = vi.fn(async (_agentId: string, _input: unknown) => null);
     const result = await recoveryService(db, { enqueueWakeup }).reconcileStrandedAssignedIssues();
     expect(result).toMatchObject({ escalated: 1, issueIds: [observed.id] });
     expect(await db.select().from(issues).where(eq(issues.id, observed.id)))
@@ -777,7 +777,7 @@ describeEmbeddedPostgres("issue recovery actions", () => {
       .toMatchObject([{ details: expect.objectContaining({ status: "blocked" }) }]);
     expect(await db.select().from(agentWakeupRequests)
       .where(eq(agentWakeupRequests.companyId, companyId))).toEqual([]);
-    expect(enqueueWakeup).not.toHaveBeenCalled();
+    expect(enqueueWakeup.mock.calls.map(([agentId]) => agentId)).toEqual([managerId]);
   });
 
   it.each(["awaiting_release", "pending_dispatch"] as const)("preserves an accepted %s agent transfer at both recovery boundaries", async state => {

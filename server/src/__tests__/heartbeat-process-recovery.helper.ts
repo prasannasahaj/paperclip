@@ -9141,7 +9141,7 @@ describeEmbeddedPostgres(`heartbeat orphaned process recovery (part ${part}/4)`,
     });
   });
 
-  it("escalates exhausted source-owner repair to the board without a substitute wake", async () => {
+  it("escalates exhausted source-owner repair to the board and only tells the manager, without a substitute wake", async () => {
     const { companyId, agentId, runId, issueId } =
       await seedStrandedIssueFixture({
         status: "in_progress",
@@ -9237,7 +9237,7 @@ describeEmbeddedPostgres(`heartbeat orphaned process recovery (part ${part}/4)`,
     expect(notices.some(comment => comment.metadata?.recovery?.kind === "disposition_repair_escalated")).toBe(true);
     const snapshot = notices.find(comment => comment.metadata?.recovery?.kind === "disposition_repair_escalated")!.metadata!.recovery;
     expect(snapshot).toEqual({ kind: "disposition_repair_escalated", actionId: action!.id, assigneeAgentId: agentId, attemptCount: 5, maxAttempts: 5, reason: "unchanged_source_state_exhausted" });
-    expect(substituteWakes).toHaveLength(0);
+    expect(substituteWakes.map(wake => wake.reason)).toEqual(["issue_blocker_stalled"]);
     expect(sourceAttemptSix).toHaveLength(0);
   });
 

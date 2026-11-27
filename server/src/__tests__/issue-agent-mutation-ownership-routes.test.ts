@@ -178,6 +178,8 @@ const mockOnboardingFirstTaskDependenciesAllowed = vi.hoisted(() => vi.fn(async 
 const mockGetExperimental = vi.hoisted(() => vi.fn());
 const mockResumeWorkspaceFinalization = vi.hoisted(() => vi.fn());
 const mockRecordNativeHumanSelfHandoff = vi.hoisted(() => vi.fn(async () => true));
+const mockGetExecutionBlocker = vi.hoisted(() => vi.fn());
+const mockResolveStallOverseerAgentId = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
 
 function registerRouteMocks() {
   vi.doMock("../services/instance-settings.js", async () => {
@@ -186,6 +188,12 @@ function registerRouteMocks() {
       ...actual.instanceSettingsService(...args), getExperimental: mockGetExperimental,
     }) };
   });
+  vi.doMock("../services/execution-blocker.js", async () => {
+    const actual = await vi.importActual<typeof import("../services/execution-blocker.js")>("../services/execution-blocker.js");
+    mockGetExecutionBlocker.mockImplementation(actual.getExecutionBlocker as never);
+    return { ...actual, getExecutionBlocker: mockGetExecutionBlocker };
+  });
+  vi.doMock("../services/recovery/overseer-wakeups.js", () => ({ resolveStallOverseerAgentId: mockResolveStallOverseerAgentId }));
   vi.doMock("../services/task-retry.js", () => ({ requestTaskRetry: mockRequestTaskRetry }));
   vi.doMock("../services/agent-task-retry.js", () => ({ agentOwnsRun: async () => true,
     agentTaskRetryActor: mockAgentTaskRetryActor, recordAgentTaskRetry: async () => undefined }));
@@ -617,6 +625,8 @@ describe("agent issue mutation checkout ownership", () => {
     mockIssueThreadInteractionService.expireRequestConfirmationsSupersededByHistoricalComments.mockResolvedValue([]);
     mockIssueThreadInteractionService.listForIssue.mockReset();
     mockIssueThreadInteractionService.listForIssue.mockResolvedValue([]);
+    mockResolveStallOverseerAgentId.mockReset();
+    mockResolveStallOverseerAgentId.mockResolvedValue(null);
     mockIssueRecoveryActionService.getActiveForIssue.mockReset();
     mockIssueRecoveryActionService.getActiveForIssue.mockResolvedValue(null);
     mockIssueRecoveryActionService.listActiveForIssues.mockReset();
@@ -1929,6 +1939,33 @@ describe("agent issue mutation checkout ownership", () => {
     });
 
     const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ status: "todo" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Agent cannot resolve another owner's recovery action");
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
+  it("lets the overseer of a stalled issue hand it back under a board-owned recovery action", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "blocked", assigneeAgentId: ownerAgentId, createdByAgentId: peerAgentId }));
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({ ...makeIssue(), ...patch }));
+    mockIssueRecoveryActionService.getActiveForIssue.mockResolvedValue({ id: recoveryActionId, ownerType: "board", ownerAgentId: null });
+    mockResolveStallOverseerAgentId.mockResolvedValue(peerAgentId);
+    mockGetExecutionBlocker.mockResolvedValue(null);
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ status: "in_progress" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockResolveStallOverseerAgentId).toHaveBeenCalledWith(expect.anything(),
+      { companyId, assigneeAgentId: ownerAgentId, createdByAgentId: peerAgentId });
+    expect(mockIssueService.update).toHaveBeenCalledWith(issueId, expect.objectContaining({ status: "in_progress" }));
+  });
+
+  it("keeps a peer that is not the overseer out of a board-owned recovery action", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue({ status: "blocked", assigneeAgentId: ownerAgentId, createdByAgentId: peerAgentId }));
+    mockIssueRecoveryActionService.getActiveForIssue.mockResolvedValue({ id: recoveryActionId, ownerType: "board", ownerAgentId: null });
+    mockResolveStallOverseerAgentId.mockResolvedValue(nextStageAgentId);
+
+    const res = await request(await createApp(peerActor())).patch(`/api/issues/${issueId}`).send({ status: "in_progress" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(403);
     expect(res.body.error).toBe("Agent cannot resolve another owner's recovery action");

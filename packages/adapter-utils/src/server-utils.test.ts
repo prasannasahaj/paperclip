@@ -3225,6 +3225,32 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toMatch(/block this issue/i);
   });
 
+  it("tells an overseer to rule on the stalled work itself and ask the human only if it cannot", () => {
+    const payload = {
+      reason: "issue_blocker_stalled",
+      issue: { id: "review-1", identifier: "TAC-340", title: "Verify deal tactics", status: "blocked", priority: "medium" },
+      blockerStall: {
+        stalledIssueId: "review-1",
+        stalledIssueIdentifier: "TAC-340",
+        stalledIssueTitle: "Verify deal tactics",
+        stalledIssueStatus: "blocked",
+        relation: "overseer",
+        recoveryAction: { id: "action-1", kind: "stranded_assigned_issue", cause: "execution_review_participant_recovery",
+          status: "active", ownerType: "board", nextAction: "The reviewer did not finish the review." },
+      },
+    };
+    expect(JSON.parse(stringifyPaperclipWakePayload(payload) ?? "{}")).toMatchObject({ blockerStall: { relation: "overseer" } });
+    const prompt = renderPaperclipWakePrompt(payload);
+    expect(prompt).toContain("## Stalled work you oversee");
+    expect(prompt).toContain("TAC-340 Verify deal tactics (blocked)");
+    expect(prompt).toContain("execution_review_participant_recovery");
+    expect(prompt).toMatch(/decide/i);
+    expect(prompt).toMatch(/comment/i);
+    expect(prompt).toMatch(/ask the human/i);
+    expect(prompt).not.toContain("## Stalled dependency");
+    expect(prompt).not.toContain("Your child issue");
+  });
+
   it("includes continuation and child issue summaries in structured wake context", () => {
     const payload = {
       reason: "issue_children_completed",
