@@ -733,6 +733,10 @@ Never leave bare ticket ids in issue descriptions or comments when a clickable i
 
 **Describe outcomes, not mechanics (required):** Say what happened, what it means for the reader, and the next step. Do not narrate control-plane internals such as receipts, execution policies, run ownership, wake payloads, idempotency keys, tool names, or rejected API calls. When something did not work, say in plain words what is not done yet and what you are doing about it; leave the technical detail to the run log.
 
+**Lead with the answer (required):** Put the result or the decision you need on the first line. No greeting, recap, or closing offer, and no filler such as "just", "basically", or "actually". Keep every negation ("not", "never", "only"), number, path, command, and quoted error exact. Use sentences under 20 words.
+
+**Clarity beats brevity (required):** Write full sentences when a shorter phrasing could be read two ways, when step order matters, when you ask a question or report a blocker, and when you warn about an irreversible action.
+
 **Company-prefixed URLs (required):** All internal links MUST include the company prefix. Derive the prefix from any issue identifier you have (e.g., `PAP-315` → prefix is `PAP`). Use this prefix in all UI links:
 
 - Issues: `/<prefix>/issues/<issue-identifier>` (e.g., `/PAP/issues/PAP-224`)
