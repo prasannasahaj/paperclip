@@ -807,7 +807,7 @@ If `plan` already exists, first `GET /api/issues/{issueId}/documents/plan` and r
 
 ## Task Triage (D3)
 
-When the company has a decision model, call `POST /api/companies/:companyId/decision-model/triage` once per task, after you have formed your own view:
+When the company has a decision model, triage a task D3-first. Call `GET /api/companies/:companyId/decision-model/triage/calibration` once per run; it lists the questions D3 is trusted to answer (`calibrated.<question>`). Then call `POST /api/companies/:companyId/decision-model/triage` once per task. Answer your own `touches_gated_area`, `owner` and `pack` questions and every question not listed as calibrated, and omit the calibrated ones from `agentAnswers`:
 
 ```json
 { "issueId": "<task id>", "task": "<task summary>", "context": "<optional>",
@@ -816,9 +816,9 @@ When the company has a decision model, call `POST /api/companies/:companyId/deci
     "needs_split": false, "capability_tier": "standard", "owner": "<agent id>" } }
 ```
 
-`work_type` is one of `investigation`, `data_analysis`, `product_discovery`, `requirements`, `implementation`, `review_and_testing`, `operations`, `communication`. `capability_tier` is `routine`, `standard` or `hard`; map it to a model and effort yourself. `chooseOwner` asks which working agent should own the task (narrow it with `ownerCandidateIds`); add `packChoices` and `agentAnswers.pack` to ask which pack fits. Send an answer for every question the server asks (`work_type`, `touches_gated_area`, `size`, `needs_split`, `capability_tier`, plus `pack` and `owner` when you ask for them). The server returns 400 and names the missing ones, because the agreement record is what decides when D3 is trusted.
+`work_type` is one of `investigation`, `data_analysis`, `product_discovery`, `requirements`, `implementation`, `review_and_testing`, `operations`, `communication`. `capability_tier` is `routine`, `standard` or `hard`; map it to a model and effort yourself. `chooseOwner` asks which working agent should own the task (narrow it with `ownerCandidateIds`); add `packChoices` and `agentAnswers.pack` to ask which pack fits. Only `work_type`, `size`, `needs_split` and `capability_tier` can be calibrated; `touches_gated_area`, `owner` and `pack` are always yours to answer. The server returns 400 and names any missing answer for a question that is not calibrated, because the agreement record is what decides when D3 is trusted. An occasional call is picked for a calibration audit and returns 400 "picked for a calibration audit"; send it again with every answer.
 
-Act on `decisions.<question>.value`. When `use` is `agent`, D3 was not confident or not yet accurate enough and the value is your own answer; if it is `null`, decide yourself. A confident D3 yes on `touches_gated_area` stands even over your no; a D3 no never overrides your yes. If the result is `unavailable` or `failed`, continue on your own judgement.
+Act on `decisions.<question>.value`. When `use` is `agent`, D3 was not confident or not yet accurate enough and the value is your own answer; if it is `null` (you omitted a calibrated question and D3 fell below its confidence bar), decide that question yourself. A confident D3 yes on `touches_gated_area` stands even over your no; a D3 no never overrides your yes. If the result is `unavailable` or `failed`, continue on your own judgement.
 
 ## Key Endpoints (Hot Routes)
 
@@ -848,6 +848,7 @@ Act on `decisions.<question>.value`. When `use` is `agent`, D3 was not confident
 | Secret proposals                      | `POST\|GET /api/agents/me/secret-proposals` • `DELETE /api/agents/me/secret-proposals/:id`                                  |
 | Dashboard                             | `GET /api/companies/:companyId/dashboard`                                                                                       |
 | D3 task triage                        | `POST /api/companies/:companyId/decision-model/triage`                                                                          |
+| D3 triage calibration                 | `GET /api/companies/:companyId/decision-model/triage/calibration`                                                               |
 
 Full endpoint table (company imports/exports, OpenClaw invites, company skills, routines, etc.) lives in `references/api-reference.md`.
 

@@ -75,7 +75,7 @@ export const TASK_TRIAGE_WORK_TYPE_CRITERIA = {
   requirements: "Write or refine a specification or story with scope and testable acceptance criteria",
   implementation: "Change code in a repository: a feature, a fix, a refactor, a dependency upgrade",
   review_and_testing: "Check work someone else did: review a merge request, run tests, verify behaviour in the running application",
-  operations: "Ship or operate: merge or release, deploy, change environment configuration or feature flags, watch a system after a release",
+  operations: "Run, configure, merge a change, release or restart something that already exists: deploy, change environment configuration or feature flags, watch a system after a release. Not for: building the change itself (implementation) or writing about it (communication)",
   communication: "Write for people: a summary, status update, release notes or a reply",
 } as const;
 export const TASK_TRIAGE_WORK_TYPES = Object.keys(TASK_TRIAGE_WORK_TYPE_CRITERIA) as [TaskTriageWorkType, ...TaskTriageWorkType[]];
@@ -95,8 +95,8 @@ export const TASK_TRIAGE_QUESTIONS = {
   work_type: { type: "choice", instructions: "What kind of work is the main part of this task?", criteria: TASK_TRIAGE_WORK_TYPE_CRITERIA },
   touches_gated_area: { type: "boolean", instructions: taskTriageGateInstructions(TASK_TRIAGE_DEFAULT_GATED_AREAS) },
   size: { type: "score", instructions: "How large is this task, whatever kind of work it is?", criteria: [
-    "Small: one focused piece of work one person finishes quickly",
-    "Medium: several related pieces that still make one deliverable",
+    "Small: one change in one repository or document, finished in one session",
+    "Medium: several related changes that still ship as one deliverable",
     "Large: needs splitting into multiple deliverables",
   ] },
   needs_split: { type: "boolean", instructions: "Should this task be split into several separately delivered tasks before anyone starts it?" },
@@ -108,11 +108,22 @@ export const TASK_TRIAGE_QUESTIONS = {
 } satisfies DecisionRequest["questions"];
 export const TASK_TRIAGE_PACK_INSTRUCTIONS = "Which context pack best fits this task?";
 export const TASK_TRIAGE_OWNER_INSTRUCTIONS = "Which team member is best suited to own this task?";
-export const TASK_TRIAGE_MIN_CONFIDENCE = 0.8;
+export const TASK_TRIAGE_MIN_CONFIDENCE = 0.7;
 export const TASK_TRIAGE_MIN_GATE_ESCALATION_CONFIDENCE = 0.7;
 export const TASK_TRIAGE_HISTORY_WINDOW = 100;
 export const TASK_TRIAGE_MIN_SAMPLES = 20;
 export const TASK_TRIAGE_MIN_AGREEMENT = 0.85;
+export const TASK_TRIAGE_CALIBRATION_MAX_AGE_DAYS = 90;
+export const TASK_TRIAGE_AUDIT_ONE_IN = 10;
+export const TASK_TRIAGE_CALIBRATABLE_QUESTIONS = ["work_type", "size", "needs_split", "capability_tier"] as const;
+export const taskTriageCalibrationSchema = z.object({
+  question: z.enum(TASK_TRIAGE_CALIBRATABLE_QUESTIONS),
+  minConfidence: z.number().min(0.5).max(1),
+  samples: z.number().int().min(1),
+  accuracy: z.number().min(0).max(1),
+  source: z.string().trim().min(1).max(200),
+}).strict();
+export type TaskTriageCalibration = z.infer<typeof taskTriageCalibrationSchema>;
 const packName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/);
 export const taskTriageAgentAnswersSchema = z.object({
   work_type: z.enum(TASK_TRIAGE_WORK_TYPES).optional(),
@@ -126,6 +137,7 @@ export const taskTriageAgentAnswersSchema = z.object({
 export type TaskTriageAgentAnswers = z.infer<typeof taskTriageAgentAnswersSchema>;
 export const taskTriageRequestSchema = z.object({
   issueId: z.string().uuid().optional(),
+  title: z.string().trim().min(1).max(300).optional(),
   task: z.string().trim().min(1).max(8000),
   context: z.string().max(16000).optional(),
   gatedAreas: z.array(z.string().trim().min(1).max(200)).min(1).max(20).optional(),
@@ -145,7 +157,7 @@ export type TaskTriageAgreement = Partial<Record<TaskTriageQuestion, boolean>>;
 export type TaskTriageVerdicts = Record<string, boolean | string>;
 export type TaskTriageDecisionReason =
   | "confident_with_agreement_record" | "escalates_gate"
-  | "gate_never_relaxed" | "low_confidence" | "insufficient_history" | "low_agreement";
+  | "gate_never_relaxed" | "low_confidence" | "insufficient_history" | "low_agreement" | "calibrated";
 export interface TaskTriageDecision {
   d3: boolean | string;
   confidence: number | null;

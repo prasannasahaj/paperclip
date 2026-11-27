@@ -1,13 +1,13 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { DECISION_TEST_REQUEST, taskTriageRequestSchema, updateDecisionModelSchema } from "@paperclipai/shared";
+import { DECISION_TEST_REQUEST, taskTriageCalibrationSchema, taskTriageRequestSchema, updateDecisionModelSchema } from "@paperclipai/shared";
 import { assertBoard, assertBoardOrAgent, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { canManageAiConnections } from "./ai-connections.js";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { decisionModelService, settingsDecisionTest } from "../services/decision-models.js";
 import { heartbeatService } from "../services/heartbeat.js";
-import { taskTriageService } from "../services/task-triage.js";
+import { activeTriageCalibration, recordTriageCalibration, taskTriageService } from "../services/task-triage.js";
 import { parseCostDateRange, parseCostLimit } from "./costs.js";
 
 export function decisionModelRoutes(db: Db) {
@@ -44,6 +44,18 @@ export function decisionModelRoutes(db: Db) {
     assertCompanyAccess(req, companyId); assertBoardOrAgent(req);
     const { actorType, actorId, agentId, runId } = getActorInfo(req);
     res.json(await triage.triage({ companyId, actor: req.actor, activityActor: { actorType, actorId, agentId, runId } }, req.body));
+  });
+  router.get("/companies/:companyId/decision-model/triage/calibration", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json({ calibrated: await activeTriageCalibration(db, companyId) });
+  });
+  router.post("/companies/:companyId/decision-model/triage/calibration", validate(taskTriageCalibrationSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId); assertBoard(req);
+    if (!(await canManageAiConnections(db, req, companyId))) throw forbidden("Manage connections permission is required");
+    const { actorType, actorId, agentId, runId } = getActorInfo(req);
+    res.json(await recordTriageCalibration(db, { companyId, actor: req.actor, activityActor: { actorType, actorId, agentId, runId } }, req.body));
   });
   router.get("/companies/:companyId/decision-model/history", async (req, res) => {
     const companyId = req.params.companyId as string;
