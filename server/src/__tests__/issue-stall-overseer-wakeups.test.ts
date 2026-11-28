@@ -204,24 +204,29 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       expect(await overseerWakes(companyId)).toEqual([]);
     });
 
-    it("wakes again once the wait after the first cancelled wake has passed", async () => {
-      const { companyId, techLead } = await stalledWithWakes(1, 3);
+    it("wakes again 10 minutes after the first cancelled wake", async () => {
+      const { companyId, techLead } = await stalledWithWakes(1, 11);
       expect(await overseerWakes(companyId)).toEqual([techLead]);
     });
 
-    it("doubles the wait after each cancelled wake", async () => {
-      const early = await stalledWithWakes(2, 3);
+    it("waits 30 minutes after the second cancelled wake", async () => {
+      const early = await stalledWithWakes(2, 29);
       expect(await overseerWakes(early.companyId)).toEqual([]);
       await db.delete(agentWakeupRequests);
-      const late = await stalledWithWakes(3, 7);
-      expect(await overseerWakes(late.companyId)).toEqual([]);
-      await db.delete(agentWakeupRequests);
-      const due = await stalledWithWakes(3, 9);
+      const due = await stalledWithWakes(2, 31);
       expect(await overseerWakes(due.companyId)).toEqual([due.techLead]);
     });
 
-    it("stops after five wakes that did not start", async () => {
-      const { companyId } = await stalledWithWakes(5, 24 * 60);
+    it("waits 2 hours after the third cancelled wake", async () => {
+      const early = await stalledWithWakes(3, 119);
+      expect(await overseerWakes(early.companyId)).toEqual([]);
+      await db.delete(agentWakeupRequests);
+      const due = await stalledWithWakes(3, 121);
+      expect(await overseerWakes(due.companyId)).toEqual([due.techLead]);
+    });
+
+    it("stops after the first wake and three retries did not start", async () => {
+      const { companyId } = await stalledWithWakes(4, 24 * 60);
       expect(await overseerWakes(companyId)).toEqual([]);
     });
 
@@ -237,7 +242,7 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       const { enqueueWakeup } = wakeRecorder();
       const result = await wakeOverseersOfStalledIssues(db, enqueueWakeup as never, { companyId });
       expect(result.retryAt).toBeGreaterThan(before);
-      expect(result.retryAt).toBeLessThanOrEqual(before + 2 * MINUTE);
+      expect(result.retryAt).toBeLessThanOrEqual(before + 10 * MINUTE);
     });
   });
 

@@ -12,12 +12,12 @@ import {
 type AgentRow = typeof agents.$inferSelect;
 
 const DEFAULT_STALL_PAGE_SIZE = 200;
-const OVERSEER_WAKE_RETRY_BASE_MS = 2 * 60_000;
-const MAX_UNSTARTED_OVERSEER_WAKES = 5;
+const OVERSEER_WAKE_RETRY_DELAYS_MS = [10 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
+const MAX_UNSTARTED_OVERSEER_WAKES = OVERSEER_WAKE_RETRY_DELAYS_MS.length + 1;
 const UNSTARTED_WAKE_STATUSES = ["cancelled", "failed"];
 
 export function overseerWakeRetryDueAt(unstartedWakes: number, lastRequestedAtMs: number) {
-  return lastRequestedAtMs + OVERSEER_WAKE_RETRY_BASE_MS * 2 ** Math.max(0, unstartedWakes - 1);
+  return lastRequestedAtMs + OVERSEER_WAKE_RETRY_DELAYS_MS[Math.min(Math.max(unstartedWakes, 1), OVERSEER_WAKE_RETRY_DELAYS_MS.length) - 1]!;
 }
 
 export const OVERSEER_JUDGMENT_CAUSES = [
