@@ -181,14 +181,64 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
     },
   );
 
-  it("never wakes the overseer again for a stall whose first wake was cancelled", async () => {
-    const companyId = await company();
-    const techLead = await agent(companyId, "Tech Lead");
-    const reviewer = await agent(companyId, "QA Verifier", { reportsTo: techLead });
-    await stalledIssue(companyId, reviewer);
-    expect(await overseerWakes(companyId)).toEqual([techLead]);
-    await db.update(agentWakeupRequests).set({ status: "cancelled" });
-    expect(await overseerWakes(companyId)).toEqual([]);
+  describe("retrying a wake that did not start", () => {
+    const MINUTE = 60_000;
+    async function stalledWithWakes(attempts: number, minutesSinceLast: number) {
+      const companyId = await company();
+      const techLead = await agent(companyId, "Tech Lead");
+      const reviewer = await agent(companyId, "QA Verifier", { reportsTo: techLead });
+      await stalledIssue(companyId, reviewer);
+      expect(await overseerWakes(companyId)).toEqual([techLead]);
+      const lastRequestedAt = new Date(Date.now() - minutesSinceLast * MINUTE);
+      await db.update(agentWakeupRequests).set({ status: "cancelled", requestedAt: lastRequestedAt });
+      const [first] = await db.select().from(agentWakeupRequests);
+      for (let i = 1; i < attempts; i += 1) {
+        const { id: _id, ...copy } = first!;
+        await db.insert(agentWakeupRequests).values(copy);
+      }
+      return { companyId, techLead };
+    }
+
+    it("waits before waking again after a cancelled wake", async () => {
+      const { companyId } = await stalledWithWakes(1, 1);
+      expect(await overseerWakes(companyId)).toEqual([]);
+    });
+
+    it("wakes again once the wait after the first cancelled wake has passed", async () => {
+      const { companyId, techLead } = await stalledWithWakes(1, 3);
+      expect(await overseerWakes(companyId)).toEqual([techLead]);
+    });
+
+    it("doubles the wait after each cancelled wake", async () => {
+      const early = await stalledWithWakes(2, 3);
+      expect(await overseerWakes(early.companyId)).toEqual([]);
+      await db.delete(agentWakeupRequests);
+      const late = await stalledWithWakes(3, 7);
+      expect(await overseerWakes(late.companyId)).toEqual([]);
+      await db.delete(agentWakeupRequests);
+      const due = await stalledWithWakes(3, 9);
+      expect(await overseerWakes(due.companyId)).toEqual([due.techLead]);
+    });
+
+    it("stops after five wakes that did not start", async () => {
+      const { companyId } = await stalledWithWakes(5, 24 * 60);
+      expect(await overseerWakes(companyId)).toEqual([]);
+    });
+
+    it("never wakes again while an earlier wake is still pending or delivered", async () => {
+      const { companyId } = await stalledWithWakes(1, 24 * 60);
+      await db.update(agentWakeupRequests).set({ status: "queued" });
+      expect(await overseerWakes(companyId)).toEqual([]);
+    });
+
+    it("tells the recovery worker when the next wake is due", async () => {
+      const { companyId } = await stalledWithWakes(1, 1);
+      const before = Date.now();
+      const { enqueueWakeup } = wakeRecorder();
+      const result = await wakeOverseersOfStalledIssues(db, enqueueWakeup as never, { companyId });
+      expect(result.retryAt).toBeGreaterThan(before);
+      expect(result.retryAt).toBeLessThanOrEqual(before + 2 * MINUTE);
+    });
   });
 
   describe("verifying an overseer wake at dispatch", () => {

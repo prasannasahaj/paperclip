@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents, agentWakeupRequests, type Db } from "@paperclipai/db";
 import { ISSUE_BLOCKER_STALLED_WAKE_REASON, type IssueBlockerStalledWakeContext } from "@paperclipai/shared";
 import { logActivity } from "../activity-log.js";
@@ -12,7 +12,13 @@ import {
 type AgentRow = typeof agents.$inferSelect;
 
 const DEFAULT_STALL_PAGE_SIZE = 200;
-const overseerWakeSettledStatuses = () => [...DELIVERED_OR_PENDING_WAKE_STATUSES, "cancelled", "failed"];
+const OVERSEER_WAKE_RETRY_BASE_MS = 2 * 60_000;
+const MAX_UNSTARTED_OVERSEER_WAKES = 5;
+const UNSTARTED_WAKE_STATUSES = ["cancelled", "failed"];
+
+export function overseerWakeRetryDueAt(unstartedWakes: number, lastRequestedAtMs: number) {
+  return lastRequestedAtMs + OVERSEER_WAKE_RETRY_BASE_MS * 2 ** Math.max(0, unstartedWakes - 1);
+}
 
 export const OVERSEER_JUDGMENT_CAUSES = [
   "stranded_assigned_issue",
@@ -84,7 +90,7 @@ export async function verifyOverseerStallWake(db: Db, input: {
 
 export async function wakeOverseersOfStalledIssues(db: Db, enqueueWakeup: BlockerStallWakeup,
   opts: { companyId?: string | null; issueId?: string | null; pageSize?: number } = {}) {
-  const result = { stalls: 0, woken: 0, alreadyWoken: 0, withoutOverseer: 0 };
+  const result: OverseerWakeResult = { stalls: 0, woken: 0, alreadyWoken: 0, withoutOverseer: 0, retryAt: null };
   const pageSize = opts.pageSize ?? DEFAULT_STALL_PAGE_SIZE;
   const loaded = new Map<string, AgentRow | null>();
   let afterActionId: string | null = null;
@@ -98,7 +104,7 @@ export async function wakeOverseersOfStalledIssues(db: Db, enqueueWakeup: Blocke
 
 async function wakeOverseersOfStallPage(db: Db, enqueueWakeup: BlockerStallWakeup, stalls: StallRow[],
   loaded: Map<string, AgentRow | null>,
-  result: { stalls: number; woken: number; alreadyWoken: number; withoutOverseer: number }) {
+  result: OverseerWakeResult) {
   for (const stall of stalls) {
     result.stalls += 1;
     if (!stall.assigneeAgentId) { result.withoutOverseer += 1; continue; }
@@ -108,10 +114,19 @@ async function wakeOverseersOfStallPage(db: Db, enqueueWakeup: BlockerStallWakeu
     if (!overseer) { result.withoutOverseer += 1; continue; }
     const idempotencyKey = issueBlockerStalledWakeKey({ waiterIssueId: stall.issueId, stalledIssueId: stall.issueId,
       recoveryActionId: stall.actionId });
-    const prior = await db.select({ id: agentWakeupRequests.id }).from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, stall.companyId), eq(agentWakeupRequests.idempotencyKey, idempotencyKey),
-        inArray(agentWakeupRequests.status, overseerWakeSettledStatuses()))).limit(1);
-    if (prior.length > 0) { result.alreadyWoken += 1; continue; }
+    const [prior] = await db.select({
+      delivered: sql<boolean>`coalesce(bool_or(${inArray(agentWakeupRequests.status, DELIVERED_OR_PENDING_WAKE_STATUSES)}), false)`,
+      unstarted: sql<number>`count(*) filter (where ${inArray(agentWakeupRequests.status, UNSTARTED_WAKE_STATUSES)})::int`,
+      lastRequestedAt: sql<string | null>`max(${agentWakeupRequests.requestedAt})`,
+    }).from(agentWakeupRequests)
+      .where(and(eq(agentWakeupRequests.companyId, stall.companyId), eq(agentWakeupRequests.idempotencyKey, idempotencyKey)));
+    if (prior?.delivered) { result.alreadyWoken += 1; continue; }
+    const unstarted = Number(prior?.unstarted ?? 0);
+    if (unstarted >= MAX_UNSTARTED_OVERSEER_WAKES) { result.alreadyWoken += 1; continue; }
+    if (unstarted > 0 && prior?.lastRequestedAt) {
+      const dueAt = overseerWakeRetryDueAt(unstarted, new Date(prior.lastRequestedAt).getTime());
+      if (dueAt > Date.now()) { result.alreadyWoken += 1; noteRetryAt(result, dueAt); continue; }
+    }
     const context = stallContext(stall, "overseer");
     const wake = await enqueueWakeup(overseer.id, {
       source: "automation", triggerDetail: "system", reason: ISSUE_BLOCKER_STALLED_WAKE_REASON,
@@ -132,4 +147,10 @@ async function wakeOverseersOfStallPage(db: Db, enqueueWakeup: BlockerStallWakeu
     });
     result.woken += 1;
   }
+}
+
+type OverseerWakeResult = { stalls: number; woken: number; alreadyWoken: number; withoutOverseer: number; retryAt: number | null };
+
+function noteRetryAt(result: OverseerWakeResult, at: number) {
+  result.retryAt = result.retryAt === null ? at : Math.min(result.retryAt, at);
 }

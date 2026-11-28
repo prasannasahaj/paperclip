@@ -3930,10 +3930,10 @@ export function recoveryService(
       { enqueueWakeup: deps.enqueueWakeup as StalledChildRespawnWakeup, cancelRun: deps.cancelRun }, { companyId: opts?.companyId });
     // A child or blocker stalled on a board-owned action: tell whoever waits on it, once per stall.
     const stalls = await wakeWaitersOfStalledIssues(db, deps.enqueueWakeup as BlockerStallWakeup, { companyId: opts?.companyId });
-    await wakeOverseersOfStalledIssues(db, deps.enqueueWakeup as BlockerStallWakeup, { companyId: opts?.companyId });
+    const overseers = await wakeOverseersOfStalledIssues(db, deps.enqueueWakeup as BlockerStallWakeup, { companyId: opts?.companyId });
     // A failed delivery is reported so the recovery worker retries this pass.
     // The earliest owed wake of a moved legacy subtask is a deadline of this pass too.
-    const retryAts = [stalls.retryAt, respawns.retryAt, rehome?.nextWakeRetryAt, releasedWriter?.nextWakeRetryAt].filter((at): at is number => typeof at === "number");
+    const retryAts = [stalls.retryAt, overseers.retryAt, respawns.retryAt, rehome?.nextWakeRetryAt, releasedWriter?.nextWakeRetryAt].filter((at): at is number => typeof at === "number");
     return { ...result, stalledChildRespawns: respawns.respawned, blockerStallWakes: stalls.woken, blockerStallWakeFailures: stalls.failed,
       blockerStallRetryAt: retryAts.length ? Math.min(...retryAts) : null };
   }
