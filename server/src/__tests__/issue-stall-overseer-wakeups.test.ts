@@ -6,7 +6,7 @@ import {
 } from "@paperclipai/db";
 import { ISSUE_BLOCKER_STALLED_WAKE_REASON } from "@paperclipai/shared";
 import { recoveryService } from "../services/recovery/service.js";
-import { wakeOverseersOfStalledIssues } from "../services/recovery/overseer-wakeups.js";
+import { verifyOverseerStallWake, wakeOverseersOfStalledIssues } from "../services/recovery/overseer-wakeups.js";
 import { issueBlockerStalledWakeKey } from "../services/recovery/blocker-stall-wakeups.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { resolveExternalTestDatabaseUrl } from "./helpers/external-test-database.js";
@@ -180,4 +180,63 @@ const support = external ? { supported: true } : await getEmbeddedPostgresTestSu
       expect(await overseerWakes(companyId)).toEqual([techLead]);
     },
   );
+
+  it("never wakes the overseer again for a stall whose first wake was cancelled", async () => {
+    const companyId = await company();
+    const techLead = await agent(companyId, "Tech Lead");
+    const reviewer = await agent(companyId, "QA Verifier", { reportsTo: techLead });
+    await stalledIssue(companyId, reviewer);
+    expect(await overseerWakes(companyId)).toEqual([techLead]);
+    await db.update(agentWakeupRequests).set({ status: "cancelled" });
+    expect(await overseerWakes(companyId)).toEqual([]);
+  });
+
+  describe("verifying an overseer wake at dispatch", () => {
+    async function dispatchedWake() {
+      const companyId = await company();
+      const techLead = await agent(companyId, "Tech Lead");
+      const reviewer = await agent(companyId, "QA Verifier", { reportsTo: techLead });
+      const { issue, action } = await stalledIssue(companyId, reviewer);
+      const { calls, enqueueWakeup } = wakeRecorder();
+      await wakeOverseersOfStalledIssues(db, enqueueWakeup as never, { companyId });
+      const contextSnapshot = calls[0]!.input.contextSnapshot as Record<string, unknown>;
+      return { companyId, techLead, reviewer, issue, action, contextSnapshot };
+    }
+    const verify = (w: Awaited<ReturnType<typeof dispatchedWake>>, over: Partial<Parameters<typeof verifyOverseerStallWake>[1]> = {}) =>
+      verifyOverseerStallWake(db, { companyId: w.companyId, issueId: w.issue.id, agentId: w.techLead,
+        contextSnapshot: w.contextSnapshot, requestedByActorType: "system", ...over });
+
+    it("accepts the manager the stall resolves to, while the board-owned action is active", async () => {
+      expect(await verify(await dispatchedWake())).toBe(true);
+    });
+
+    it("rejects an agent that is not the stall's overseer", async () => {
+      const w = await dispatchedWake();
+      const stranger = await agent(w.companyId, "Stranger");
+      expect(await verify(w, { agentId: stranger })).toBe(false);
+    });
+
+    it("rejects a wake not requested by the system", async () => {
+      expect(await verify(await dispatchedWake(), { requestedByActorType: "agent" })).toBe(false);
+    });
+
+    it("rejects a wake whose context names another recovery action", async () => {
+      const w = await dispatchedWake();
+      const stall = w.contextSnapshot.blockerStall as Record<string, any>;
+      const forged = { ...w.contextSnapshot, blockerStall: { ...stall, recoveryAction: { ...stall.recoveryAction, id: randomUUID() } } };
+      expect(await verify(w, { contextSnapshot: forged })).toBe(false);
+    });
+
+    it("rejects the wake once the recovery action is resolved", async () => {
+      const w = await dispatchedWake();
+      await db.update(issueRecoveryActions).set({ status: "resolved" }).where(eq(issueRecoveryActions.id, w.action.id));
+      expect(await verify(w)).toBe(false);
+    });
+
+    it("rejects a dependency-stall wake, which is not an overseer wake", async () => {
+      const w = await dispatchedWake();
+      const stall = w.contextSnapshot.blockerStall as Record<string, any>;
+      expect(await verify(w, { contextSnapshot: { ...w.contextSnapshot, blockerStall: { ...stall, relation: "child" } } })).toBe(false);
+    });
+  });
 });

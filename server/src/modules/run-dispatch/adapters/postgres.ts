@@ -34,7 +34,7 @@ import {
   nativeRunFinalizations,
   projects,
 } from "@paperclipai/db";
-import { ISSUE_DISPOSITION_REPAIR_RETRY_REASON, isUuidLike } from "@paperclipai/shared";
+import { ISSUE_BLOCKER_STALLED_WAKE_REASON, ISSUE_DISPOSITION_REPAIR_RETRY_REASON, isUuidLike } from "@paperclipai/shared";
 import { withOperationAccountingTransaction } from "../../../services/accounting-transaction.js";
 import { lockBudgetAdmissionControls } from "../../../services/budget-admission-controls.js";
 import type { ActivityPublication } from "../../../services/activity-log.js";
@@ -56,6 +56,7 @@ import { appendHeartbeatRunEvent } from "../../../services/heartbeat-run-events.
 import { emitAgentTaskRun } from "../../../services/agent-task-run-telemetry.js";
 import { issueService } from "../../../services/issues.js";
 import { verifyBlockerStallWake } from "../../../services/recovery/blocker-stall-wakeups.js";
+import { verifyOverseerStallWake } from "../../../services/recovery/overseer-wakeups.js";
 import { readPredecessorRetirementFallback } from "../../../services/native-runtime/predecessor-retirement.js";
 import {
   issueTreeControlService,
@@ -695,6 +696,15 @@ export function createPostgresRunDispatchAdapter(
             .then((rows) => Boolean(rows[0]))
         : false;
 
+    const isVerifiedOverseerStallWake = issue && wakeReason === ISSUE_BLOCKER_STALLED_WAKE_REASON
+      ? await verifyOverseerStallWake(dbOrTx as unknown as Db, { companyId: input.companyId, issueId: issue.id,
+          agentId: input.agentId, contextSnapshot: context,
+          requestedByActorType: await dbOrTx.select({ actor: agentWakeupRequests.requestedByActorType })
+            .from(heartbeatRuns).innerJoin(agentWakeupRequests, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+            .where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId)))
+            .then(rows => rows[0]?.actor ?? null) })
+      : false;
+
     const retryReasonKind = classifyRetryReasonKind(retryReason);
     // Dependency edges can change after scheduled promotion without changing
     // the displayed status. Read them again under the queued/final issue lock.
@@ -739,6 +749,7 @@ export function createPostgresRunDispatchAdapter(
         || context.source === "connection_tools.refreshed",
       isInteractionWake,
       isAuthorizedSourceScopedRecovery,
+      isVerifiedOverseerStallWake,
       isNonAssigneeWorkspaceBusyRetry: isNonAssigneeWorkspaceBusyRetry(retryReason, context),
       resumeIntent,
       wakeCommentIdPresent: Boolean(wakeCommentId),

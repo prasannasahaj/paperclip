@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
   activityLog,
   agents,
+  agentWakeupRequests,
   approvals,
   budgetIncidents,
   budgetPolicies,
@@ -35,6 +36,8 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "../../../__tests__/helpers/embedded-postgres.js";
 import { createPostgresRunDispatchAdapter } from "./postgres.js";
+import { readStalls, stallContext } from "../../../services/recovery/blocker-stall-wakeups.js";
+import { OVERSEER_JUDGMENT_CAUSES } from "../../../services/recovery/overseer-wakeups.js";
 import { settleUnrecoverableExecutions } from "../../../services/execution-recovery-resolution.js";
 import { getExecutionBlocker } from "../../../services/execution-blocker.js";
 import { projectTaskInterruption } from "../../../services/task-interruption-presentation.js";
@@ -85,6 +88,7 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
     await db.delete(issues);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
+    await db.delete(agentWakeupRequests);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
@@ -1357,6 +1361,41 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
         outcome: "cancelled",
         errorCode: "issue_assignee_changed",
       });
+    });
+
+    async function seedOverseerWake(input: { requestedByActorType: "system" | "agent" }) {
+      const { companyId, agentId: techLeadId } = await seedCompanyAndAgent();
+      const reviewerId = randomUUID();
+      await seedAgent({ id: reviewerId, companyId, name: "QaVerifier" });
+      await db.update(agents).set({ reportsTo: techLeadId }).where(eq(agents.id, reviewerId));
+      const issueId = randomUUID();
+      await seedIssue({ companyId, issueId, status: "blocked", assigneeAgentId: reviewerId });
+      await db.insert(issueRecoveryActions).values({ companyId, sourceIssueId: issueId, kind: "stranded_assigned_issue",
+        status: "active", ownerType: "board", cause: "execution_review_participant_recovery", fingerprint: "fixture",
+        nextAction: "The reviewer did not finish the review." });
+      const [stall] = await readStalls(db, { companyId, issueIds: [issueId], causes: OVERSEER_JUDGMENT_CAUSES }, 1);
+      const [wake] = await db.insert(agentWakeupRequests).values({ companyId, agentId: techLeadId, source: "automation",
+        triggerDetail: "system", reason: "issue_blocker_stalled", status: "queued",
+        requestedByActorType: input.requestedByActorType, requestedByActorId: "issue-stall-overseer" }).returning();
+      const runId = randomUUID();
+      await db.insert(heartbeatRuns).values({ id: runId, companyId, agentId: techLeadId, invocationSource: "automation",
+        status: "queued", wakeupRequestId: wake.id, contextSnapshot: { issueId, wakeReason: "issue_blocker_stalled",
+          blockerStall: stallContext(stall!, "overseer") } });
+      return { companyId, runId };
+    }
+
+    it("lets the manager's stall-overseer wake start on an issue its report owns", async () => {
+      const { companyId, runId } = await seedOverseerWake({ requestedByActorType: "system" });
+      const result = await createPostgresRunDispatchAdapter(db).cancelStaleQueuedRun({
+        runId, companyId, expectedStatus: "queued", now: new Date() });
+      expect(result).not.toMatchObject({ outcome: "cancelled" });
+    });
+
+    it("still cancels a stall-overseer wake that the system did not send", async () => {
+      const { companyId, runId } = await seedOverseerWake({ requestedByActorType: "agent" });
+      const result = await createPostgresRunDispatchAdapter(db).cancelStaleQueuedRun({
+        runId, companyId, expectedStatus: "queued", now: new Date() });
+      expect(result).toMatchObject({ outcome: "cancelled", errorCode: "issue_assignee_changed" });
     });
 
     it(

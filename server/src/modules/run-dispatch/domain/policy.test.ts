@@ -521,6 +521,28 @@ describe("decideQueuedRunStaleness", () => {
     };
     expect(decideQueuedRunStaleness(facts, NOW)).toEqual({ stale: false });
   });
+
+  it("allows a verified stall overseer to run on an issue it does not own", () => {
+    const facts: QueuedRunFacts = {
+      ...baseStalenessFacts(),
+      issueStatus: "blocked",
+      issueAssigneeAgentId: "agent-2",
+      wakeReason: "issue_blocker_stalled",
+      isVerifiedOverseerStallWake: true,
+    };
+    expect(decideQueuedRunStaleness(facts, NOW)).toEqual({ stale: false });
+  });
+
+  it("cancels an overseer wake that the server did not verify", () => {
+    const facts: QueuedRunFacts = {
+      ...baseStalenessFacts(),
+      issueStatus: "blocked",
+      issueAssigneeAgentId: "agent-2",
+      wakeReason: "issue_blocker_stalled",
+      isVerifiedOverseerStallWake: false,
+    };
+    expect(decideQueuedRunStaleness(facts, NOW)).toMatchObject({ stale: true, errorCode: "issue_assignee_changed" });
+  });
 });
 
 describe("native replacement execution authority", () => {

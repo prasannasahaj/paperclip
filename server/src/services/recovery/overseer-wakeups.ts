@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { agents, agentWakeupRequests, type Db } from "@paperclipai/db";
-import { ISSUE_BLOCKER_STALLED_WAKE_REASON } from "@paperclipai/shared";
+import { ISSUE_BLOCKER_STALLED_WAKE_REASON, type IssueBlockerStalledWakeContext } from "@paperclipai/shared";
 import { logActivity } from "../activity-log.js";
 import { SUCCESSFUL_RUN_MISSING_STATE_REASON } from "./successful-run-handoff.js";
 import { parseHeartbeatPolicy } from "../heartbeat/timer-policy.js";
@@ -12,6 +12,7 @@ import {
 type AgentRow = typeof agents.$inferSelect;
 
 const DEFAULT_STALL_PAGE_SIZE = 200;
+const overseerWakeSettledStatuses = () => [...DELIVERED_OR_PENDING_WAKE_STATUSES, "cancelled", "failed"];
 
 export const OVERSEER_JUDGMENT_CAUSES = [
   "stranded_assigned_issue",
@@ -55,6 +56,32 @@ export async function resolveStallOverseerAgentId(db: Db,
   return overseer?.id ?? null;
 }
 
+/**
+ * Whether a queued run is the overseer wake the server sent for this issue's
+ * current stall. The run's agent is the manager or requester, never the
+ * assignee, so dispatch admits it only when the stall, its action and the
+ * agent all match server state; the wake reason string alone never qualifies.
+ */
+export async function verifyOverseerStallWake(db: Db, input: {
+  companyId: string;
+  issueId: string;
+  agentId: string;
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  requestedByActorType: string | null | undefined;
+}): Promise<boolean> {
+  const context = input.contextSnapshot;
+  if (context?.wakeReason !== ISSUE_BLOCKER_STALLED_WAKE_REASON || input.requestedByActorType !== "system") return false;
+  const stall = context.blockerStall as Partial<IssueBlockerStalledWakeContext> | undefined;
+  const actionId = typeof stall?.recoveryAction?.id === "string" ? stall.recoveryAction.id : null;
+  if (stall?.relation !== "overseer" || stall.stalledIssueId !== input.issueId || !actionId) return false;
+  const [current] = await readStalls(db, { companyId: input.companyId, issueIds: [input.issueId],
+    causes: OVERSEER_JUDGMENT_CAUSES }, 1);
+  if (!current || current.actionId !== actionId || !current.assigneeAgentId) return false;
+  const overseerId = await resolveStallOverseerAgentId(db, { companyId: input.companyId,
+    assigneeAgentId: current.assigneeAgentId, createdByAgentId: current.createdByAgentId });
+  return overseerId === input.agentId;
+}
+
 export async function wakeOverseersOfStalledIssues(db: Db, enqueueWakeup: BlockerStallWakeup,
   opts: { companyId?: string | null; issueId?: string | null; pageSize?: number } = {}) {
   const result = { stalls: 0, woken: 0, alreadyWoken: 0, withoutOverseer: 0 };
@@ -83,7 +110,7 @@ async function wakeOverseersOfStallPage(db: Db, enqueueWakeup: BlockerStallWakeu
       recoveryActionId: stall.actionId });
     const prior = await db.select({ id: agentWakeupRequests.id }).from(agentWakeupRequests)
       .where(and(eq(agentWakeupRequests.companyId, stall.companyId), eq(agentWakeupRequests.idempotencyKey, idempotencyKey),
-        inArray(agentWakeupRequests.status, DELIVERED_OR_PENDING_WAKE_STATUSES))).limit(1);
+        inArray(agentWakeupRequests.status, overseerWakeSettledStatuses()))).limit(1);
     if (prior.length > 0) { result.alreadyWoken += 1; continue; }
     const context = stallContext(stall, "overseer");
     const wake = await enqueueWakeup(overseer.id, {
