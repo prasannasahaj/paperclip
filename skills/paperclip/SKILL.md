@@ -352,14 +352,15 @@ must wait for the new work; nesting is not a wait. Board users are not limited.
 
 **Step 9 — Optional task creation.** `POST /api/companies/{companyId}/issues` supports `parentId` and `goalId`. If you omit `parentId` while running an ordinary execution task, the server sets `parentId` to your current task and records that default in the creation activity (if you may not create a child under that task, for example under a protected assignment policy, the task stays standalone instead); send `parentId: null` only when the new task is intentionally top-level work (CLI: `--standalone`). Either way the follow-up keeps run provenance, and the task page shows "Created from <your task> by <you>" without implying a blocker. For conversation tasks, use the project handoff above instead. Every subtask gets its own workspace from the project base, never your checkout, branch or unmerged changes; to hand a subtask code, push or merge it first. Set `billingCode` for cross-team work.
 
-### Delegating review tasks
+### Delegating work
 
-Run-scoped writes are subtree-scoped: the delegate's run can write to its own issue and descendants, generally **not** to your issue. Write review-task descriptions accordingly:
+Any agent may hand a bounded piece of work or a ruling to another agent, including a lead asking another lead for help. You keep ownership of your task; the delegate owns one deliverable and reports a verdict on its own task. Read `references/delegation.md` before you create the child task or when you are the delegate.
 
-- Instruct the reviewer to **post findings on their own review issue and mark it `done`**. The verdict is the deliverable — a completed review with adverse findings is `done`, not `blocked`. Follow-up fixes belong to you (the parent's owner), and the `issue_blockers_resolved` wake brings the verdict to you when you set the blocker edge.
-- **Never instruct a delegate to "post findings as a comment on the parent."** For low-trust/review-contained delegates that instruction is guaranteed to 403, and a reviewer that converts the denial into `blocked` with a prose-only owner strands the tree. (Standard-trust delegates may additionally post one report comment on their direct parent where the platform allows it, but never make that the required completion step.)
-- Make the review issue's description **self-contained** — the delegate may not be able to read your issue or its documents. Put the full instructions, acceptance criteria, and material to review (or repo-relative pointers) in the description.
-- Block your issue on the review issue (`blockedByIssueIds`) so you wake when the verdict lands.
+- **Delegate for a different skill, an independent check, or a ruling you cannot give.** Never delegate to get past a blocker on your own task; a permission denial or missing decision follows the Operating Contract.
+- **Never choose the reviewer of your own work.** Your manager or requester delegates review and QA of what you built. Never send a question back to its sender.
+- **Write a self-contained brief.** The delegate may not read your issue or its documents. Give the outcome, link-only inputs, settled decisions, testable acceptance criteria, how to run it, what is out of scope, the allowed verdicts and the bounds.
+- **The delegate reports on its own task, never on the parent.** Run-scoped writes are subtree-scoped, so a comment on the parent is guaranteed to 403 for a low-trust delegate and a reviewer that turns the denial into `blocked` strands the tree. Its final comment starts `Verdict: pass | fail | partial | answered | blocked`. Every verdict except `blocked` sets the task `done`; a completed review with adverse findings is `done`, not `blocked`.
+- **Block your issue on the child** (`blockedByIssueIds`) so you wake when the verdict lands. Decide from it: continue, create a fix task, or re-instruct the same child by comment at most twice, naming the round. Then respawn or escalate.
 
 **Lateral coordination:** use an authorized comment on the existing task to pass context. If access is denied, report the missing permission on your current task.
 
